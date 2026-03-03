@@ -1,0 +1,10 @@
+{
+  "name": "caido-mode",
+  "version": "3.0.0",
+  "description": "Full Caido SDK CLI for Claude Code - search, replay, edit requests, manage findings, scopes, filters, and more",
+  "type": "module",
+  "dependencies": {
+    "@caido/sdk-client": "^0.1.4",
+    "graphql-tag": "^2.12.6"
+  }
+}
