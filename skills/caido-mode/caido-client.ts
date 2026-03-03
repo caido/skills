@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env -S npx tsx
 /**
  * Caido SDK Client v3.0
  * Clean multi-file CLI built entirely on @caido/sdk-client.
@@ -198,12 +198,12 @@ Usage:
     export CAIDO_URL=http://localhost:8080
 
 Examples:
-  bun caido-client.ts search 'req.method.eq:"POST"' --limit 50
-  bun caido-client.ts edit 12345 --path /api/admin --method POST
-  bun caido-client.ts create-finding 12345 --title "IDOR" --reporter "rez0"
-  bun caido-client.ts create-scope "Target" --allow "*.example.com"
-  bun caido-client.ts replay-sessions --limit 10
-  bun caido-client.ts health
+  npx tsx caido-client.ts search 'req.method.eq:"POST"' --limit 50
+  npx tsx caido-client.ts edit 12345 --path /api/admin --method POST
+  npx tsx caido-client.ts create-finding 12345 --title "IDOR" --reporter "rez0"
+  npx tsx caido-client.ts create-scope "Target" --allow "*.example.com"
+  npx tsx caido-client.ts replay-sessions --limit 10
+  npx tsx caido-client.ts health
 `);
 }
 
@@ -534,7 +534,7 @@ async function main() {
     case "setup": {
       const pat = args[1];
       if (!pat) {
-        console.error("Usage: bun caido-client.ts setup <pat> [url]");
+        console.error("Usage: npx tsx caido-client.ts setup <pat> [url]");
         console.error("\nGet a PAT from: Caido → Settings → Developer → Personal Access Tokens");
         process.exit(1);
       }

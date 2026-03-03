@@ -32,19 +32,19 @@ Cookies and auth tokens are huge. Instead of copy-pasting 2KB of session cookies
 
 ## Setup
 
-Requires [Bun](https://bun.sh) and a running Caido instance.
+Requires [Node.js](https://nodejs.org) (v18+) and a running Caido instance.
 
 ```bash
 # Install dependencies
-bun install
+npm install
 
 # 1. Create a PAT in Caido → Settings → Developer → Personal Access Tokens
 # 2. Setup (validates PAT via SDK and caches access token)
-bun caido-client.ts setup <your-pat>
+npx tsx caido-client.ts setup <your-pat>
 
 # 3. Verify it works
-bun caido-client.ts health
-bun caido-client.ts recent --limit 1
+npx tsx caido-client.ts health
+npx tsx caido-client.ts recent --limit 1
 
 # Or use env var instead
 export CAIDO_PAT=<your-pat>
@@ -72,23 +72,23 @@ lib/
 
 ## Usage
 
-All commands output JSON. Run `bun caido-client.ts --help` for the complete list.
+All commands output JSON. Run `npx tsx caido-client.ts --help` for the complete list.
 
 ### Search & Browse
 
 ```bash
 # Search with HTTPQL (Caido's query language)
-bun caido-client.ts search 'req.method.eq:"POST" AND resp.code.eq:200'
-bun caido-client.ts search 'req.host.cont:"api"' --limit 50
+npx tsx caido-client.ts search 'req.method.eq:"POST" AND resp.code.eq:200'
+npx tsx caido-client.ts search 'req.host.cont:"api"' --limit 50
 
 # Get recent requests
-bun caido-client.ts recent --limit 10
+npx tsx caido-client.ts recent --limit 10
 
 # Full request details with raw HTTP
-bun caido-client.ts get <request-id>
+npx tsx caido-client.ts get <request-id>
 
 # Just the response
-bun caido-client.ts get-response <request-id>
+npx tsx caido-client.ts get-response <request-id>
 ```
 
 ### Edit & Replay (the main feature)
@@ -97,105 +97,105 @@ Take an existing authenticated request and modify only what you need. Cookies, a
 
 ```bash
 # Change the path (IDOR testing)
-bun caido-client.ts edit <id> --path /api/user/999
+npx tsx caido-client.ts edit <id> --path /api/user/999
 
 # Change method + body (privilege escalation)
-bun caido-client.ts edit <id> --method POST --body '{"role":"admin"}'
+npx tsx caido-client.ts edit <id> --method POST --body '{"role":"admin"}'
 
 # Add/remove headers (bypass testing)
-bun caido-client.ts edit <id> --set-header "X-Forwarded-For: 127.0.0.1"
-bun caido-client.ts edit <id> --remove-header "X-CSRF-Token"
+npx tsx caido-client.ts edit <id> --set-header "X-Forwarded-For: 127.0.0.1"
+npx tsx caido-client.ts edit <id> --remove-header "X-CSRF-Token"
 
 # Find/replace text anywhere in the request
-bun caido-client.ts edit <id> --replace "user123:::user456"
+npx tsx caido-client.ts edit <id> --replace "user123:::user456"
 ```
 
 ### Export to curl
 
 ```bash
-bun caido-client.ts export-curl <request-id>
+npx tsx caido-client.ts export-curl <request-id>
 ```
 
 ### Findings
 
 ```bash
-bun caido-client.ts findings
-bun caido-client.ts get-finding <finding-id>
-bun caido-client.ts create-finding <request-id> \
+npx tsx caido-client.ts findings
+npx tsx caido-client.ts get-finding <finding-id>
+npx tsx caido-client.ts create-finding <request-id> \
   --title "IDOR in user profile" \
   --description "Can access other users' data" \
   --reporter "rez0"
-bun caido-client.ts update-finding <finding-id> --title "Updated title"
+npx tsx caido-client.ts update-finding <finding-id> --title "Updated title"
 ```
 
 ### Scopes
 
 ```bash
-bun caido-client.ts scopes
-bun caido-client.ts create-scope "Target" --allow "*.target.com" --deny "*.cdn.target.com"
-bun caido-client.ts update-scope <id> --allow "*.target.com,*.api.target.com"
-bun caido-client.ts delete-scope <id>
+npx tsx caido-client.ts scopes
+npx tsx caido-client.ts create-scope "Target" --allow "*.target.com" --deny "*.cdn.target.com"
+npx tsx caido-client.ts update-scope <id> --allow "*.target.com,*.api.target.com"
+npx tsx caido-client.ts delete-scope <id>
 ```
 
 ### Filter Presets
 
 ```bash
-bun caido-client.ts filters
-bun caido-client.ts create-filter "API Errors" --query 'req.path.cont:"/api/" AND resp.code.gte:400'
-bun caido-client.ts create-filter "Auth" --query 'req.path.regex:"/(login|auth)/"' --alias "auth"
-bun caido-client.ts delete-filter <id>
+npx tsx caido-client.ts filters
+npx tsx caido-client.ts create-filter "API Errors" --query 'req.path.cont:"/api/" AND resp.code.gte:400'
+npx tsx caido-client.ts create-filter "Auth" --query 'req.path.regex:"/(login|auth)/"' --alias "auth"
+npx tsx caido-client.ts delete-filter <id>
 ```
 
 ### Environments
 
 ```bash
-bun caido-client.ts envs
-bun caido-client.ts create-env "IDOR-Test"
-bun caido-client.ts env-set <env-id> victim_id "user_456"
-bun caido-client.ts select-env <env-id>
-bun caido-client.ts delete-env <id>
+npx tsx caido-client.ts envs
+npx tsx caido-client.ts create-env "IDOR-Test"
+npx tsx caido-client.ts env-set <env-id> victim_id "user_456"
+npx tsx caido-client.ts select-env <env-id>
+npx tsx caido-client.ts delete-env <id>
 ```
 
 ### Sessions & Collections
 
 ```bash
-bun caido-client.ts create-session <request-id>
-bun caido-client.ts rename-session <session-id> "idor-user-profile"
-bun caido-client.ts replay-sessions
-bun caido-client.ts delete-sessions <id1>,<id2>
+npx tsx caido-client.ts create-session <request-id>
+npx tsx caido-client.ts rename-session <session-id> "idor-user-profile"
+npx tsx caido-client.ts replay-sessions
+npx tsx caido-client.ts delete-sessions <id1>,<id2>
 
-bun caido-client.ts replay-collections
-bun caido-client.ts create-collection "IDOR Tests"
-bun caido-client.ts rename-collection <id> "Auth Bypass"
-bun caido-client.ts delete-collection <id>
+npx tsx caido-client.ts replay-collections
+npx tsx caido-client.ts create-collection "IDOR Tests"
+npx tsx caido-client.ts rename-collection <id> "Auth Bypass"
+npx tsx caido-client.ts delete-collection <id>
 ```
 
 ### Fuzzing
 
 ```bash
-bun caido-client.ts create-automate-session <request-id>
+npx tsx caido-client.ts create-automate-session <request-id>
 # Configure payload markers and wordlists in Caido UI first
-bun caido-client.ts fuzz <session-id>
+npx tsx caido-client.ts fuzz <session-id>
 ```
 
 ### Tasks, Projects, Info & Health
 
 ```bash
-bun caido-client.ts tasks
-bun caido-client.ts cancel-task <task-id>
-bun caido-client.ts projects
-bun caido-client.ts select-project <id>
-bun caido-client.ts viewer
-bun caido-client.ts plugins
-bun caido-client.ts health
+npx tsx caido-client.ts tasks
+npx tsx caido-client.ts cancel-task <task-id>
+npx tsx caido-client.ts projects
+npx tsx caido-client.ts select-project <id>
+npx tsx caido-client.ts viewer
+npx tsx caido-client.ts plugins
+npx tsx caido-client.ts health
 ```
 
 ### Intercept Control
 
 ```bash
-bun caido-client.ts intercept-status
-bun caido-client.ts intercept-enable
-bun caido-client.ts intercept-disable
+npx tsx caido-client.ts intercept-status
+npx tsx caido-client.ts intercept-enable
+npx tsx caido-client.ts intercept-disable
 ```
 
 ### Output Control
@@ -239,7 +239,7 @@ This repo is designed to work as a [Claude Code skill](https://docs.anthropic.co
 To install as a skill:
 ```bash
 cp -r . ~/.claude/skills/caido-mode/
-cd ~/.claude/skills/caido-mode && bun install
+cd ~/.claude/skills/caido-mode && npm install
 ```
 
 ## License

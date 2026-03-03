@@ -82,7 +82,7 @@ export function loadConfig(): CaidoConfig {
   console.error("Setup:");
   console.error("  1. Open Caido → Settings → Developer → Personal Access Tokens");
   console.error("  2. Create a token");
-  console.error("  3. Run: bun caido-client.ts setup <token>");
+  console.error("  3. Run: npx tsx caido-client.ts setup <token>");
   console.error("  Or set env var: export CAIDO_PAT=<token>");
   process.exit(1);
 }
