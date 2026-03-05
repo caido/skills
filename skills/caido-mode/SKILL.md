@@ -38,7 +38,7 @@ All traffic goes through Caido, so it appears in the UI for further analysis.
 
 ### Setup (One-Time)
 
-1. Open Caido → Settings → Developer → Personal Access Tokens
+1. Open [Dashboard → Developer → Personal Access Tokens](https://docs.caido.io/dashboard/guides/create_pat.html)
 2. Create a new token
 3. Run:
 

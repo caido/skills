@@ -32,13 +32,13 @@ Cookies and auth tokens are huge. Instead of copy-pasting 2KB of session cookies
 
 ## Setup
 
-Requires [Node.js](https://nodejs.org) (v18+) and a running Caido instance.
+Requires [Node.js](https://nodejs.org) (v24+), a running Caido instance and a [PAT](https://docs.caido.io/dashboard/guides/create_pat.html).
 
 ```bash
 # Install dependencies
 npm install
 
-# 1. Create a PAT in Caido → Settings → Developer → Personal Access Tokens
+# 1. Create a PAT in Dashboard → Developer → Personal Access Tokens
 # 2. Setup (validates PAT via SDK and caches access token)
 node caido-client.ts setup <your-pat>
 
@@ -237,6 +237,7 @@ Built on `@caido/sdk-client` v0.1.4+. Multi-file architecture with clean separat
 This repo is designed to work as a [Claude Code skill](https://docs.anthropic.com/en/docs/claude-code). The `SKILL.md` file provides Claude with full context on how to use every command, HTTPQL syntax, and testing workflows.
 
 To install as a skill:
+
 ```bash
 cp -r . ~/.claude/skills/caido-mode/
 cd ~/.claude/skills/caido-mode && npm install
