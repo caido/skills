@@ -67,10 +67,10 @@ export async function cmdReplay(requestId: string, rawOverride: string | undefin
 export async function cmdSendRaw(host: string, port: number, tls: boolean, raw: string, opts: OutputOpts) {
   const client = await getClient();
 
-  // Create a blank session
+  // Create a blank session (raw must be base64-encoded for the Blob scalar)
   const session = await client.replay.sessions.create({
     requestSource: {
-      raw,
+      raw: btoa(raw),
       connection: { host, port, isTLS: tls },
     },
   });
