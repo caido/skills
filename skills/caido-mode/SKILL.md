@@ -129,6 +129,7 @@ node caido-client.ts edit <id> --method PUT --path /api/admin --body '{"role":"a
 | `--remove-header <Name>` | Remove a header (repeatable) |
 | `--body <content>` | Set request body (auto-updates Content-Length) |
 | `--replace <from>:::<to>` | Find/replace text anywhere in request (repeatable) |
+| `--session <id>` | Reuse existing replay session (iterate in same tab) |
 
 ### replay / send-raw - Send requests
 
@@ -530,7 +531,20 @@ node caido-client.ts create-finding <request-id> --title "IDOR on /api/user/:id"
 node caido-client.ts export-curl <request-id>
 ```
 
-### 2. Privilege Escalation Testing
+### 2. Iterating on a Request (Same Replay Tab)
+
+```bash
+# First edit creates a session — grab the sessionId from output
+node caido-client.ts edit <request-id> --path /api/user/1 --compact
+# Output: { "sessionId": "895", ... }
+
+# Subsequent edits reuse the same tab with --session
+node caido-client.ts edit <request-id> --path /api/user/2 --session 895 --compact
+node caido-client.ts edit <request-id> --path /api/user/3 --session 895 --compact
+node caido-client.ts edit <request-id> --method DELETE --session 895 --compact
+```
+
+### 3. Privilege Escalation Testing
 
 ```bash
 node caido-client.ts search 'req.path.cont:"/admin"' --limit 10
@@ -538,7 +552,7 @@ node caido-client.ts edit <id> --path /api/admin/users --method GET
 node caido-client.ts edit <id> --method POST --body '{"role":"admin"}'
 ```
 
-### 3. Header Bypass Testing
+### 4. Header Bypass Testing
 
 ```bash
 node caido-client.ts edit <id> --set-header "X-Forwarded-For: 127.0.0.1"
@@ -546,7 +560,7 @@ node caido-client.ts edit <id> --set-header "X-Original-URL: /admin"
 node caido-client.ts edit <id> --remove-header "X-CSRF-Token"
 ```
 
-### 4. Fuzzing with Automate
+### 5. Fuzzing with Automate
 
 ```bash
 node caido-client.ts create-automate-session <request-id>
@@ -554,7 +568,7 @@ node caido-client.ts create-automate-session <request-id>
 node caido-client.ts fuzz <session-id>
 ```
 
-### 5. Filter + Analyze Pattern
+### 6. Filter + Analyze Pattern
 
 ```bash
 # Save useful filters

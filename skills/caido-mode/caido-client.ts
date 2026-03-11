@@ -56,6 +56,7 @@ Usage:
     --remove-header <name>     Remove header (repeatable)
     --body <body>              Set request body
     --replace <from>:::<to>    Replace text in request (repeatable)
+    --session <id>             Reuse existing replay session (iterate same tab)
 
   export-curl <request-id>     Export request as curl command
 
@@ -283,7 +284,7 @@ async function main() {
 
     case "edit": {
       if (!args[1]) { console.error("Error: request-id required"); process.exit(1); }
-      let method: string | undefined, path: string | undefined, body: string | undefined;
+      let method: string | undefined, path: string | undefined, body: string | undefined, sessionId: string | undefined;
       const setHeaders: string[] = [], removeHeaders: string[] = [], replacements: string[] = [];
       for (let i = 2; i < args.length; i++) {
         if (args[i] === "--method" && args[i + 1]) { method = args[i + 1]; i++; }
@@ -292,8 +293,9 @@ async function main() {
         else if (args[i] === "--set-header" && args[i + 1]) { setHeaders.push(args[i + 1]); i++; }
         else if (args[i] === "--remove-header" && args[i + 1]) { removeHeaders.push(args[i + 1]); i++; }
         else if (args[i] === "--replace" && args[i + 1]) { replacements.push(args[i + 1]); i++; }
+        else if (args[i] === "--session" && args[i + 1]) { sessionId = args[i + 1]; i++; }
       }
-      await cmdEdit(args[1], { method, path, body, setHeaders, removeHeaders, replacements }, parseOutputOpts(args, 2));
+      await cmdEdit(args[1], { method, path, body, setHeaders, removeHeaders, replacements, sessionId }, parseOutputOpts(args, 2));
       break;
     }
 

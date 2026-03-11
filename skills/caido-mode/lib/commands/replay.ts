@@ -111,6 +111,7 @@ export async function cmdEdit(
     removeHeaders: string[];
     body?: string;
     replacements: string[];
+    sessionId?: string;
   },
   opts: OutputOpts,
 ) {
@@ -189,12 +190,12 @@ export async function cmdEdit(
 
   const modifiedRaw = [requestLine, ...headers].join(lineEnd) + lineEnd + lineEnd + bodyPart;
 
-  // Create session and send
-  const session = await client.replay.sessions.create({
+  // Reuse existing session or create a new one
+  const sessionId = edits.sessionId ?? (await client.replay.sessions.create({
     requestSource: { id: requestId },
-  });
+  })).id;
 
-  const result = await client.replay.send(session.id, {
+  const result = await client.replay.send(sessionId, {
     raw: modifiedRaw,
     connection: {
       host: original.request.host,
@@ -204,7 +205,7 @@ export async function cmdEdit(
   });
 
   const output: Record<string, any> = {
-    sessionId: session.id,
+    sessionId,
     status: result.status,
     error: result.error,
   };
