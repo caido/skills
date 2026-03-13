@@ -649,6 +649,32 @@ node caido-client.ts search 'preset:"API 4xx"' --limit 20
 8. **Create filter presets** for recurring searches to save typing
 9. **Use environments** to store test data (victim IDs, tokens, etc.)
 10. **Output is JSON** - parse response fields as needed
+11. **Use replay sessions when you are actively testing the same endpoint across multiple requests** (e.g., iterating on headers/body/parameters for a single path with persisted history and context).
+12. **Never use replay sessions for simple path existence checks or broad path fuzzing.** For these cases, use `curl` directly and proxy traffic through Caido so that all requests still appear in Caido’s HTTP history.
+
+### Curl via Caido Proxy (for path existence checks & fuzzing)
+
+When you just need to check whether a path exists or fuzz many different paths, do **not** create or reuse replay sessions. Instead:
+
+1. **Read Caido’s URL from `secrets.json`** (written by the `setup` command, usually at `~/.claude/config/secrets.json`):
+
+```bash
+CAIDO_URL="$(jq -r '.caido.url' ~/.claude/config/secrets.json)"
+```
+
+2. **Use that URL as curl’s upstream proxy**, so all traffic still flows through Caido:
+
+```bash
+# Single path check
+curl -x "$CAIDO_URL" https://target.example.com/admin -k -i
+
+# Simple path fuzzing example (wordlist.txt contains candidate paths)
+while read -r p; do
+  curl -x "$CAIDO_URL" "https://target.example.com/$p" -k -s -o /dev/null -w "%{http_code} /$p\n"
+done < wordlist.txt
+```
+
+This keeps Caido sessions clean (no noisy replay sessions for basic discovery work) while still capturing every request/response in Caido for later analysis.
 
 ## Performance & Context Optimization
 
