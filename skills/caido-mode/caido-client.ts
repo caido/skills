@@ -32,6 +32,7 @@ Usage:
     --limit <n>                Max results (default: 20)
     --after <cursor>           Pagination cursor
     --ids-only                 Output only request IDs
+    --desc / --latest          Sort by newest first (descending ID)
 
   recent                       Get recent requests
     --limit <n>                Max results (default: 20)
@@ -224,12 +225,14 @@ async function main() {
       let limit = 20;
       let after: string | undefined;
       let idsOnly = false;
+      let desc = false;
       for (let i = 2; i < args.length; i++) {
         if (args[i] === "--limit" && args[i + 1]) { limit = parseInt(args[i + 1], 10); i++; }
         else if (args[i] === "--after" && args[i + 1]) { after = args[i + 1]; i++; }
         else if (args[i] === "--ids-only") { idsOnly = true; }
+        else if (args[i] === "--desc" || args[i] === "--latest") { desc = true; }
       }
-      await cmdSearch(filter, limit, after, idsOnly);
+      await cmdSearch(filter, limit, after, idsOnly, desc);
       break;
     }
 

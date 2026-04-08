@@ -81,6 +81,7 @@ node caido-client.ts search 'req.method.eq:"POST" AND resp.code.eq:200'
 node caido-client.ts search 'req.host.cont:"api"' --limit 50
 node caido-client.ts search 'req.path.cont:"/admin"' --ids-only
 node caido-client.ts search 'resp.raw.cont:"password"' --after <cursor>
+node caido-client.ts search 'req.host.cont:"target.com"' --desc --limit 5  # newest first
 ```
 
 ### recent - Get recent requests

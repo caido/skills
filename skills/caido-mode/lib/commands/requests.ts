@@ -4,9 +4,10 @@ import { getClient } from "../client";
 import { decodeRaw, formatHttpRaw, rawToCurl } from "../output";
 import type { OutputOpts } from "../types";
 
-export async function cmdSearch(filter: string, limit: number, after?: string, idsOnly?: boolean) {
+export async function cmdSearch(filter: string, limit: number, after?: string, idsOnly?: boolean, desc?: boolean) {
   const client = await getClient();
   let builder = client.request.list().filter(filter).first(limit);
+  if (desc) builder = builder.descending("req", "id");
   if (after) builder = builder.after(after);
 
   const connection = await builder;
