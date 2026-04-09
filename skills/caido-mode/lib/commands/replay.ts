@@ -9,37 +9,123 @@ import {
 } from "../graphql";
 import type { OutputOpts } from "../types";
 
+// ── Shared helpers ──
+
+/** Connection override options parsed from CLI */
+export interface ConnectionOverrides {
+  sni?: string;
+  connectHost?: string;
+  connectPort?: number;
+  connectTls?: boolean;
+}
+
+/**
+ * Resolve raw HTTP request value, handling @file, stdin, and C-style escapes.
+ * Follows curl conventions:
+ *   --raw @file.txt       → read from file
+ *   --raw -               → read from stdin
+ *   --raw "GET / ..."     → process C-style escape sequences (\r \n \t \\)
+ */
+export async function resolveRaw(raw: string): Promise<string> {
+  // @file — read from file (like curl -d @file)
+  if (raw.startsWith("@")) {
+    const filePath = raw.slice(1);
+    const { readFile } = await import("node:fs/promises");
+    const { resolve } = await import("node:path");
+    return (await readFile(resolve(filePath), "utf-8"));
+  }
+
+  // - — read from stdin (like curl -d @-)
+  if (raw === "-") {
+    return await readStdin();
+  }
+
+  // String value — process C-style escapes then ensure CRLF
+  return normalizeRaw(raw);
+}
+
+/** Read all of stdin as a string */
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks).toString("utf-8");
+}
+
+/**
+ * Process C-style escape sequences in a raw HTTP string.
+ * If the string already contains real CRLF bytes, return as-is.
+ * Otherwise interpret: \r → CR, \n → LF, \t → TAB, \\ → backslash
+ */
+export function normalizeRaw(raw: string): string {
+  // If the raw already contains real CR characters, it's fine
+  if (raw.includes("\r\n")) return raw;
+  // Process C-style escape sequences
+  return raw.replace(/\\([rnt\\])/g, (_, ch) => {
+    switch (ch) {
+      case "r": return "\r";
+      case "n": return "\n";
+      case "t": return "\t";
+      case "\\": return "\\";
+      default: return ch;
+    }
+  });
+}
+
+/** Build connection info with overrides */
+function buildConnection(
+  host: string,
+  port: number,
+  isTLS: boolean,
+  overrides?: ConnectionOverrides,
+) {
+  const conn: Record<string, any> = {
+    host: overrides?.connectHost ?? host,
+    port: overrides?.connectPort ?? port,
+    isTLS: overrides?.connectTls ?? isTLS,
+  };
+  if (overrides?.sni) {
+    conn.SNI = overrides.sni;
+  }
+  return conn;
+}
+
 // ── Replay ──
 
-export async function cmdReplay(requestId: string, rawOverride: string | undefined, opts: OutputOpts) {
+export async function cmdReplay(
+  requestId: string,
+  rawOverride: string | undefined,
+  opts: OutputOpts,
+  overrides?: ConnectionOverrides,
+  collectionId?: string,
+) {
   const client = await getClient();
 
-  // Get the original request to extract connection info
   const original = await client.request.get(requestId, { raw: true });
   if (!original) {
     console.error(`Request ${requestId} not found`);
     process.exit(1);
   }
 
-  // Create a temporary replay session
-  const session = await client.replay.sessions.create({
-    requestSource: { id: requestId },
-  });
+  const createOpts: any = { requestSource: { id: requestId } };
+  if (collectionId) createOpts.collectionId = collectionId;
+  const session = await client.replay.sessions.create(createOpts);
 
-  const raw = rawOverride || decodeRaw(original.request.raw);
+  let raw = rawOverride ? await resolveRaw(rawOverride) : decodeRaw(original.request.raw);
   if (!raw) {
     console.error("No raw data for this request");
     process.exit(1);
   }
 
-  const result = await client.replay.send(session.id, {
-    raw,
-    connection: {
-      host: original.request.host,
-      port: original.request.port,
-      isTLS: original.request.isTls,
-    },
-  });
+  const connection = buildConnection(
+    original.request.host,
+    original.request.port,
+    original.request.isTls,
+    overrides,
+  );
+
+  const result = await client.replay.send(session.id, { raw, connection });
 
   const output: Record<string, any> = {
     sessionId: session.id,
@@ -49,6 +135,9 @@ export async function cmdReplay(requestId: string, rawOverride: string | undefin
 
   if (result.entry) {
     output.entryId = result.entry.id;
+    if (result.entry.request) {
+      output.requestId = result.entry.request.id;
+    }
     if (result.entry.response) {
       output.response = {
         statusCode: result.entry.response.statusCode,
@@ -64,21 +153,38 @@ export async function cmdReplay(requestId: string, rawOverride: string | undefin
   console.log(JSON.stringify(output, null, 2));
 }
 
-export async function cmdSendRaw(host: string, port: number, tls: boolean, raw: string, opts: OutputOpts) {
+export async function cmdSendRaw(
+  host: string,
+  port: number,
+  tls: boolean,
+  raw: string,
+  opts: OutputOpts,
+  overrides?: ConnectionOverrides,
+  collectionId?: string,
+  sessionName?: string,
+) {
   const client = await getClient();
 
-  // Create a blank session
-  const session = await client.replay.sessions.create({
-    requestSource: {
-      raw,
-      connection: { host, port, isTLS: tls },
-    },
-  });
+  raw = await resolveRaw(raw);
+  const rawB64 = btoa(raw);
 
-  const result = await client.replay.send(session.id, {
-    raw,
-    connection: { host, port, isTLS: tls },
-  });
+  const connection = buildConnection(host, port, tls, overrides);
+
+  const createOpts: any = {
+    requestSource: {
+      raw: rawB64,
+      connection,
+    },
+  };
+  if (collectionId) createOpts.collectionId = collectionId;
+
+  const session = await client.replay.sessions.create(createOpts);
+
+  if (sessionName) {
+    await client.replay.sessions.rename(session.id, sessionName);
+  }
+
+  const result = await client.replay.send(session.id, { raw, connection });
 
   const output: Record<string, any> = {
     sessionId: session.id,
@@ -86,14 +192,20 @@ export async function cmdSendRaw(host: string, port: number, tls: boolean, raw: 
     error: result.error,
   };
 
-  if (result.entry?.response) {
-    output.response = {
-      statusCode: result.entry.response.statusCode,
-      roundtrip: result.entry.response.roundtripTime,
-      length: result.entry.response.length,
-    };
-    if (result.entry.response.raw) {
-      output.response.raw = formatHttpRaw(decodeRaw(result.entry.response.raw), opts);
+  if (result.entry) {
+    output.entryId = result.entry.id;
+    if (result.entry.request) {
+      output.requestId = result.entry.request.id;
+    }
+    if (result.entry.response) {
+      output.response = {
+        statusCode: result.entry.response.statusCode,
+        roundtrip: result.entry.response.roundtripTime,
+        length: result.entry.response.length,
+      };
+      if (result.entry.response.raw) {
+        output.response.raw = formatHttpRaw(decodeRaw(result.entry.response.raw), opts);
+      }
     }
   }
 
@@ -113,6 +225,8 @@ export async function cmdEdit(
     replacements: string[];
   },
   opts: OutputOpts,
+  overrides?: ConnectionOverrides,
+  collectionId?: string,
 ) {
   const client = await getClient();
   const original = await client.request.get(requestId, { raw: true });
@@ -189,19 +303,18 @@ export async function cmdEdit(
 
   const modifiedRaw = [requestLine, ...headers].join(lineEnd) + lineEnd + lineEnd + bodyPart;
 
-  // Create session and send
-  const session = await client.replay.sessions.create({
-    requestSource: { id: requestId },
-  });
+  const createOpts: any = { requestSource: { id: requestId } };
+  if (collectionId) createOpts.collectionId = collectionId;
+  const session = await client.replay.sessions.create(createOpts);
 
-  const result = await client.replay.send(session.id, {
-    raw: modifiedRaw,
-    connection: {
-      host: original.request.host,
-      port: original.request.port,
-      isTLS: original.request.isTls,
-    },
-  });
+  const connection = buildConnection(
+    original.request.host,
+    original.request.port,
+    original.request.isTls,
+    overrides,
+  );
+
+  const result = await client.replay.send(session.id, { raw: modifiedRaw, connection });
 
   const output: Record<string, any> = {
     sessionId: session.id,
@@ -213,14 +326,20 @@ export async function cmdEdit(
     output.modifiedRequest = formatHttpRaw(modifiedRaw, opts);
   }
 
-  if (result.entry?.response) {
-    output.response = {
-      statusCode: result.entry.response.statusCode,
-      roundtrip: result.entry.response.roundtripTime,
-      length: result.entry.response.length,
-    };
-    if (result.entry.response.raw) {
-      output.response.raw = formatHttpRaw(decodeRaw(result.entry.response.raw), opts);
+  if (result.entry) {
+    output.entryId = result.entry.id;
+    if (result.entry.request) {
+      output.requestId = result.entry.request.id;
+    }
+    if (result.entry.response) {
+      output.response = {
+        statusCode: result.entry.response.statusCode,
+        roundtrip: result.entry.response.roundtripTime,
+        length: result.entry.response.length,
+      };
+      if (result.entry.response.raw) {
+        output.response.raw = formatHttpRaw(decodeRaw(result.entry.response.raw), opts);
+      }
     }
   }
 
@@ -243,11 +362,11 @@ export async function cmdReplaySessions(limit: number) {
   console.log(JSON.stringify({ results, count: results.length }, null, 2));
 }
 
-export async function cmdCreateSession(requestId: string) {
+export async function cmdCreateSession(requestId: string, collectionId?: string) {
   const client = await getClient();
-  const session = await client.replay.sessions.create({
-    requestSource: { id: requestId },
-  });
+  const createOpts: any = { requestSource: { id: requestId } };
+  if (collectionId) createOpts.collectionId = collectionId;
+  const session = await client.replay.sessions.create(createOpts);
   console.log(JSON.stringify({
     id: session.id,
     name: session.name,
@@ -265,6 +384,79 @@ export async function cmdDeleteSessions(ids: string[]) {
   const client = await getClient();
   await client.replay.sessions.delete(ids);
   console.log(JSON.stringify({ deleted: ids }, null, 2));
+}
+
+export async function cmdMoveSession(sessionId: string, collectionId: string) {
+  const client = await getClient();
+  const session = await client.replay.sessions.move(sessionId, collectionId);
+  console.log(JSON.stringify({
+    id: session.id,
+    name: session.name,
+    collectionId: session.collectionId,
+    moved: true,
+  }, null, 2));
+}
+
+export async function cmdSessionEntries(sessionId: string, limit: number, includeRaw: boolean) {
+  const client = await getClient();
+  const session = await client.replay.sessions.get(sessionId);
+  if (!session) {
+    console.error(`Session ${sessionId} not found`);
+    process.exit(1);
+  }
+
+  let builder = session.entries();
+  if (includeRaw) {
+    builder = builder.includeRaw({ request: true, response: true, replay: false });
+  }
+  const connection = await builder.first(limit);
+
+  const results = connection.edges.map(e => {
+    const entry: Record<string, any> = {
+      id: e.node.id,
+      sessionId: e.node.sessionId,
+      createdAt: e.node.createdAt,
+      error: e.node.error,
+    };
+
+    if (e.node.connection) {
+      entry.connection = {
+        host: e.node.connection.host,
+        port: e.node.connection.port,
+        isTLS: e.node.connection.isTLS,
+        ...(e.node.connection.SNI ? { SNI: e.node.connection.SNI } : {}),
+      };
+    }
+
+    if (e.node.request) {
+      entry.request = {
+        id: e.node.request.id,
+        method: e.node.request.method,
+        host: e.node.request.host,
+        port: e.node.request.port,
+        path: e.node.request.path,
+        isTls: e.node.request.isTls,
+      };
+    }
+
+    if (e.node.response) {
+      entry.response = {
+        statusCode: e.node.response.statusCode,
+        roundtrip: e.node.response.roundtripTime,
+        length: e.node.response.length,
+      };
+    }
+
+    return entry;
+  });
+
+  console.log(JSON.stringify({
+    sessionId,
+    sessionName: session.name,
+    activeEntryId: session.activeEntryId,
+    results,
+    count: results.length,
+  }, null, 2));
 }
 
 // ── Collections ──

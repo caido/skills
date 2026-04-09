@@ -1,6 +1,6 @@
-#!/usr/bin/env -S node
+#!/usr/bin/env -S npx tsx
 /**
- * Caido SDK Client v3.0
+ * Caido SDK Client v3.1
  * Clean multi-file CLI built entirely on @caido/sdk-client.
  * No raw fetch — uses SDK methods + client.graphql.query/mutation with gql documents.
  */
@@ -9,7 +9,8 @@ import { parseOutputOpts, DEFAULT_OUTPUT_OPTS } from "./lib/types";
 
 // Commands
 import { cmdSearch, cmdRecent, cmdGet, cmdGetResponse, cmdExportCurl } from "./lib/commands/requests";
-import { cmdReplay, cmdSendRaw, cmdEdit, cmdReplaySessions, cmdCreateSession, cmdRenameSession, cmdDeleteSessions, cmdReplayCollections, cmdCreateCollection, cmdRenameCollection, cmdDeleteCollection, cmdCreateAutomateSession, cmdFuzz } from "./lib/commands/replay";
+import { cmdReplay, cmdSendRaw, cmdEdit, cmdReplaySessions, cmdCreateSession, cmdRenameSession, cmdDeleteSessions, cmdMoveSession, cmdSessionEntries, cmdReplayCollections, cmdCreateCollection, cmdRenameCollection, cmdDeleteCollection, cmdCreateAutomateSession, cmdFuzz } from "./lib/commands/replay";
+import type { ConnectionOverrides } from "./lib/commands/replay";
 import { cmdFindings, cmdGetFinding, cmdCreateFinding, cmdUpdateFinding } from "./lib/commands/findings";
 import { cmdScopes, cmdCreateScope, cmdUpdateScope, cmdDeleteScope, cmdFilters, cmdCreateFilter, cmdUpdateFilter, cmdDeleteFilter, cmdEnvs, cmdCreateEnv, cmdSelectEnv, cmdEnvSet, cmdDeleteEnv, cmdProjects, cmdSelectProject, cmdHostedFiles, cmdDeleteHostedFile, cmdTasks, cmdCancelTask } from "./lib/commands/management";
 import { cmdInterceptStatus, cmdInterceptSet } from "./lib/commands/intercept";
@@ -17,9 +18,38 @@ import { cmdViewer, cmdPlugins, cmdHealth, cmdSetup, cmdAuthStatus } from "./lib
 
 const DEBUG = process.env.DEBUG === "1";
 
+/** Parse --sni, --connect-host, --connect-port, --connect-tls from args */
+function parseConnectionOverrides(args: string[], startIdx: number): ConnectionOverrides {
+  const overrides: ConnectionOverrides = {};
+  for (let i = startIdx; i < args.length; i++) {
+    if (args[i] === "--sni" && args[i + 1]) { overrides.sni = args[i + 1]; i++; }
+    else if (args[i] === "--connect-host" && args[i + 1]) { overrides.connectHost = args[i + 1]; i++; }
+    else if (args[i] === "--connect-port" && args[i + 1]) { overrides.connectPort = parseInt(args[i + 1], 10); i++; }
+    else if (args[i] === "--connect-tls") { overrides.connectTls = true; }
+    else if (args[i] === "--connect-no-tls") { overrides.connectTls = false; }
+  }
+  return overrides;
+}
+
+/** Find --collection <id> in args */
+function parseCollectionId(args: string[], startIdx: number): string | undefined {
+  for (let i = startIdx; i < args.length; i++) {
+    if (args[i] === "--collection" && args[i + 1]) return args[i + 1];
+  }
+  return undefined;
+}
+
+/** Find --name <name> in args */
+function parseSessionName(args: string[], startIdx: number): string | undefined {
+  for (let i = startIdx; i < args.length; i++) {
+    if (args[i] === "--name" && args[i + 1]) return args[i + 1];
+  }
+  return undefined;
+}
+
 function printUsage() {
   console.log(`
-Caido SDK Client v3.0 — Built on @caido/sdk-client
+Caido SDK Client v3.1 — Built on @caido/sdk-client
 
 Usage:
   caido-client.ts <command> [options]
@@ -41,13 +71,22 @@ Usage:
   get-response <request-id>    Get just the response for a request
 
   replay <request-id>          Replay a request (blocks until response)
-    --raw <raw-request>        Override with custom raw request
+    --raw <str|@file|->        Override with custom raw request
+    --collection <id>          Add session to this collection
+    --sni <hostname>           TLS Server Name Indication override
+    --connect-host <host>      Connect to different host than Host header
+    --connect-port <port>      Connect to different port
+    --connect-tls              Force TLS on override connection
+    --connect-no-tls           Force plain on override connection
 
   send-raw                     Send a custom raw request
     --host <hostname>          Target host (required)
     --port <port>              Target port (default: 443)
     --tls / --no-tls           Use TLS (default: true)
-    --raw <raw-request>        Raw HTTP request (required)
+    --raw <str|@file|->        Raw HTTP request (required)
+    --sni <hostname>           TLS Server Name Indication override
+    --collection <id>          Add session to this collection
+    --name <session-name>      Name the replay session
 
   edit <request-id>            Edit and replay a request (keeps cookies/auth)
     --method <METHOD>          Change HTTP method
@@ -56,6 +95,10 @@ Usage:
     --remove-header <name>     Remove header (repeatable)
     --body <body>              Set request body
     --replace <from>:::<to>    Replace text in request (repeatable)
+    --collection <id>          Add session to this collection
+    --sni <hostname>           TLS SNI override
+    --connect-host <host>      Connect to different host
+    --connect-port <port>      Connect to different port
 
   export-curl <request-id>     Export request as curl command
 
@@ -64,10 +107,16 @@ Usage:
 ═══════════════════════════════════════════════
 
   create-session <request-id>  Create a replay session from a request
+    --collection <id>          Add to this collection
   rename-session <id> <name>   Rename a replay session
+  move-session <id> <coll-id>  Move a session to a collection
   replay-sessions              List replay sessions
     --limit <n>                Max results (default: 20)
   delete-sessions <id,id,...>  Delete replay sessions
+
+  session-entries <session-id> List replay history for a session
+    --limit <n>                Max results (default: 20)
+    --raw                      Include raw request/response data
 
   replay-collections           List replay collections
     --limit <n>                Max results (default: 20)
@@ -197,13 +246,36 @@ Usage:
     export CAIDO_PAT=<token>
     export CAIDO_URL=http://localhost:8080
 
+═══════════════════════════════════════════════
+ SESSION NAMING CONVENTION
+═══════════════════════════════════════════════
+
+  Name sessions as: "G|Po|Pu|Pa|De /path/../identifying"
+    - G=GET, Po=POST, Pu=PUT, Pa=PATCH, De=DELETE
+    - Use the shortest path fragment that identifies the endpoint
+    - Reuse the same session for multiple attack vectors on one endpoint
+    - Delete sessions that have no findings value
+
+  Examples:
+    "G /api/user/profile"     "Po /auth/login"
+    "Pu /admin/settings"      "De /api/records"
+
+  --raw accepts: string with C-style escapes, @file, or - for stdin
+    "GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n"  → escapes \\r\\n to real CRLF
+    @request.txt                              → read raw from file
+    -                                         → read from stdin (pipe)
+
 Examples:
-  node caido-client.ts search 'req.method.eq:"POST"' --limit 50
-  node caido-client.ts edit 12345 --path /api/admin --method POST
-  node caido-client.ts create-finding 12345 --title "IDOR" --reporter "rez0"
-  node caido-client.ts create-scope "Target" --allow "*.example.com"
-  node caido-client.ts replay-sessions --limit 10
-  node caido-client.ts health
+  caido-client.ts search 'req.method.eq:"POST"' --limit 50
+  caido-client.ts edit 12345 --path /api/admin --method POST
+  caido-client.ts send-raw --host target.com --raw "GET / HTTP/1.1\\r\\nHost: target.com\\r\\n\\r\\n"
+  caido-client.ts send-raw --host target.com --raw @request.txt
+  cat request.txt | caido-client.ts send-raw --host target.com --raw -
+  caido-client.ts send-raw --host 1.2.3.4 --sni target.com --raw "..." --collection 5
+  caido-client.ts replay 123 --connect-host 10.0.0.1 --connect-port 8080
+  caido-client.ts session-entries 42 --limit 10
+  caido-client.ts move-session 42 5
+  caido-client.ts health
 `);
 }
 
@@ -260,7 +332,9 @@ async function main() {
       for (let i = 2; i < args.length; i++) {
         if (args[i] === "--raw" && args[i + 1]) { rawOverride = args[i + 1]; i++; }
       }
-      await cmdReplay(args[1], rawOverride, parseOutputOpts(args, 2));
+      const overrides = parseConnectionOverrides(args, 2);
+      const collId = parseCollectionId(args, 2);
+      await cmdReplay(args[1], rawOverride, parseOutputOpts(args, 2), overrides, collId);
       break;
     }
 
@@ -277,7 +351,10 @@ async function main() {
         console.error("Error: --host and --raw are required");
         process.exit(1);
       }
-      await cmdSendRaw(host, port, tls, raw, parseOutputOpts(args, 1));
+      const overrides = parseConnectionOverrides(args, 1);
+      const collId = parseCollectionId(args, 1);
+      const sessName = parseSessionName(args, 1);
+      await cmdSendRaw(host, port, tls, raw, parseOutputOpts(args, 1), overrides, collId, sessName);
       break;
     }
 
@@ -293,7 +370,9 @@ async function main() {
         else if (args[i] === "--remove-header" && args[i + 1]) { removeHeaders.push(args[i + 1]); i++; }
         else if (args[i] === "--replace" && args[i + 1]) { replacements.push(args[i + 1]); i++; }
       }
-      await cmdEdit(args[1], { method, path, body, setHeaders, removeHeaders, replacements }, parseOutputOpts(args, 2));
+      const overrides = parseConnectionOverrides(args, 2);
+      const collId = parseCollectionId(args, 2);
+      await cmdEdit(args[1], { method, path, body, setHeaders, removeHeaders, replacements }, parseOutputOpts(args, 2), overrides, collId);
       break;
     }
 
@@ -306,13 +385,20 @@ async function main() {
     // ── Replay Sessions ──
     case "create-session": {
       if (!args[1]) { console.error("Error: request-id required"); process.exit(1); }
-      await cmdCreateSession(args[1]);
+      const collId = parseCollectionId(args, 2);
+      await cmdCreateSession(args[1], collId);
       break;
     }
 
     case "rename-session": {
       if (!args[1] || !args[2]) { console.error("Error: session-id and name required"); process.exit(1); }
       await cmdRenameSession(args[1], args[2]);
+      break;
+    }
+
+    case "move-session": {
+      if (!args[1] || !args[2]) { console.error("Error: session-id and collection-id required"); process.exit(1); }
+      await cmdMoveSession(args[1], args[2]);
       break;
     }
 
@@ -328,6 +414,18 @@ async function main() {
     case "delete-sessions": {
       if (!args[1]) { console.error("Error: comma-separated session IDs required"); process.exit(1); }
       await cmdDeleteSessions(args[1].split(",").map(s => s.trim()));
+      break;
+    }
+
+    case "session-entries": {
+      if (!args[1]) { console.error("Error: session-id required"); process.exit(1); }
+      let limit = 20;
+      let includeRaw = false;
+      for (let i = 2; i < args.length; i++) {
+        if (args[i] === "--limit" && args[i + 1]) { limit = parseInt(args[i + 1], 10); i++; }
+        else if (args[i] === "--raw") { includeRaw = true; }
+      }
+      await cmdSessionEntries(args[1], limit, includeRaw);
       break;
     }
 
@@ -534,7 +632,7 @@ async function main() {
     case "setup": {
       const pat = args[1];
       if (!pat) {
-        console.error("Usage: node caido-client.ts setup <pat> [url]");
+        console.error("Usage: caido-client.ts setup <pat> [url]");
         console.error("\nGet a PAT from: Caido → Settings → Developer → Personal Access Tokens");
         process.exit(1);
       }

@@ -132,16 +132,60 @@ node caido-client.ts edit <id> --method PUT --path /api/admin --body '{"role":"a
 
 ### replay / send-raw - Send requests
 
+`--raw` accepts three formats (like curl's `@` syntax):
+- **String** with C-style escapes: `"GET / HTTP/1.1\r\nHost: x\r\n\r\n"` — `\r\n` converted to real CRLF
+- **@file**: `@request.txt` — reads raw HTTP from file (file should have real CRLF)
+- **Stdin**: `-` — reads from stdin pipe
+
 ```bash
 # Replay as-is
 node caido-client.ts replay <request-id>
 
-# Replay with custom raw
+# Replay with custom raw (C-style escapes)
 node caido-client.ts replay <id> --raw "GET /modified HTTP/1.1\r\nHost: example.com\r\n\r\n"
 
 # Send completely custom request
 node caido-client.ts send-raw --host example.com --port 443 --tls --raw "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"
+
+# Read raw from file
+node caido-client.ts send-raw --host example.com --tls --raw @request.txt
+
+# Read raw from stdin
+cat request.txt | node caido-client.ts send-raw --host example.com --tls --raw -
+
+# Name the replay session on creation
+node caido-client.ts send-raw --host example.com --tls --raw "..." --name "G /api/test"
+
+# Add to a specific collection
+node caido-client.ts replay <id> --collection 5
+node caido-client.ts send-raw --host example.com --tls --raw "..." --collection 5
 ```
+
+### Connection Overrides (SNI, host routing)
+
+Available on `replay`, `send-raw`, and `edit`:
+
+```bash
+# Override TLS SNI (useful when connecting to IP but need specific SNI)
+node caido-client.ts send-raw --host 1.2.3.4 --tls --sni target.com --raw "..."
+
+# Route to a different host/port than the Host header
+node caido-client.ts replay <id> --connect-host 10.0.0.1 --connect-port 8080
+
+# Force TLS on/off for the override connection
+node caido-client.ts replay <id> --connect-host backend.internal --connect-tls
+node caido-client.ts replay <id> --connect-host backend.internal --connect-no-tls
+```
+
+| Option | Description |
+|--------|-------------|
+| `--sni <hostname>` | TLS Server Name Indication override |
+| `--connect-host <host>` | Connect to different host than Host header |
+| `--connect-port <port>` | Connect to different port |
+| `--connect-tls` | Force TLS on override connection |
+| `--connect-no-tls` | Force plain on override connection |
+| `--collection <id>` | Add session to a specific collection |
+| `--name <name>` | Name the replay session (send-raw only) |
 
 ### export-curl - Convert to curl for PoCs
 
@@ -160,16 +204,41 @@ Outputs a ready-to-use curl command with all headers and body.
 ```bash
 # Create replay session from an existing request
 node caido-client.ts create-session <request-id>
+node caido-client.ts create-session <request-id> --collection 5
 
-# ALWAYS rename sessions for easy identification in Caido UI
-node caido-client.ts rename-session <session-id> "idor-user-profile"
+# ALWAYS rename sessions using the naming convention (see below)
+node caido-client.ts rename-session <session-id> "G /api/user/profile"
+
+# Move session to a collection
+node caido-client.ts move-session <session-id> <collection-id>
 
 # List all replay sessions
 node caido-client.ts replay-sessions
 node caido-client.ts replay-sessions --limit 50
 
+# View replay history for a session
+node caido-client.ts session-entries <session-id>
+node caido-client.ts session-entries <session-id> --limit 50
+node caido-client.ts session-entries <session-id> --raw  # include raw request/response
+
 # Delete replay sessions
 node caido-client.ts delete-sessions <session-id-1>,<session-id-2>
+```
+
+### Session Naming Convention
+
+Name sessions as: `"G|Po|Pu|Pa|De /path/../identifying"`
+
+- **G**=GET, **Po**=POST, **Pu**=PUT, **Pa**=PATCH, **De**=DELETE
+- Use the shortest path fragment that uniquely identifies the endpoint
+- **Reuse the same session** for multiple attack vectors on the same endpoint
+- **Delete sessions** that produced no findings value
+
+Examples:
+```
+"G /api/user/profile"     "Po /auth/login"
+"Pu /admin/settings"      "De /api/records"
+"G /api/../account"       "Po /graphql"
 ```
 
 ### Collections
@@ -574,12 +643,38 @@ node caido-client.ts search 'preset:"API 4xx"' --limit 20
 2. **Workflow**: Search → find request with valid auth → use that ID for all tests via `edit`
 3. **Don't dump raw requests into context** - use `--compact` or `--headers-only` when exploring
 4. **Always check auth first**: `health` to verify connection, then `recent --limit 1`
-5. **ALWAYS NAME REPLAY TABS**: `rename-session <id> "idor-user-profile"`
+5. **ALWAYS NAME REPLAY TABS** using convention: `rename-session <id> "G /api/user/profile"` (G=GET, Po=POST, Pu=PUT, Pa=PATCH, De=DELETE + shortest identifying path). Reuse sessions for the same endpoint. Delete valueless sessions.
 6. **Create findings** for anything interesting - they show up in Caido's Findings tab
 7. **Use `export-curl`** when building PoCs for reports
 8. **Create filter presets** for recurring searches to save typing
 9. **Use environments** to store test data (victim IDs, tokens, etc.)
 10. **Output is JSON** - parse response fields as needed
+11. **Use replay sessions when you are actively testing the same endpoint across multiple requests** (e.g., iterating on headers/body/parameters for a single path with persisted history and context).
+12. **Never use replay sessions for simple path existence checks or broad path fuzzing.** For these cases, use `curl` directly and proxy traffic through Caido so that all requests still appear in Caido’s HTTP history.
+
+### Curl via Caido Proxy (for path existence checks & fuzzing)
+
+When you just need to check whether a path exists or fuzz many different paths, do **not** create or reuse replay sessions. Instead:
+
+1. **Read Caido’s URL from `secrets.json`** (written by the `setup` command, usually at `~/.claude/config/secrets.json`):
+
+```bash
+CAIDO_URL="$(jq -r '.caido.url' ~/.claude/config/secrets.json)"
+```
+
+2. **Use that URL as curl’s upstream proxy**, so all traffic still flows through Caido:
+
+```bash
+# Single path check
+curl -x "$CAIDO_URL" https://target.example.com/admin -k -i
+
+# Simple path fuzzing example (wordlist.txt contains candidate paths)
+while read -r p; do
+  curl -x "$CAIDO_URL" "https://target.example.com/$p" -k -s -o /dev/null -w "%{http_code} /$p\n"
+done < wordlist.txt
+```
+
+This keeps Caido sessions clean (no noisy replay sessions for basic discovery work) while still capturing every request/response in Caido for later analysis.
 
 ## Performance & Context Optimization
 
