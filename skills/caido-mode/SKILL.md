@@ -390,6 +390,11 @@ Caido's query language for searching HTTP history.
 
 **CRITICAL**: String values MUST be quoted. Integer values are NOT quoted.
 
+**CRITICAL**: HTTPQL has NO `NOT` operator. Never write `NOT expr`. Use the negated operator variant instead:
+- `ncont` (not contains), `nlike` (not like), `nregex` (not regex), `ne` (not equals)
+- Wrong: `NOT req.path.cont:"/admin"`
+- Right: `req.path.ncont:"/admin"`
+
 ### Namespaces and Fields
 
 | Namespace | Field | Type | Description |
@@ -448,6 +453,15 @@ source:"replay" OR source:"automate"
 
 # Date filtering
 req.created_at.gt:"2024-01-01T00:00:00Z"
+
+# Exclude paths (use ncont, NOT doesn't exist)
+req.path.ncont:"/static"
+
+# Not equal
+req.method.ne:"OPTIONS"
+
+# Combine negations
+req.path.ncont:"/health" AND req.path.ncont:"/metrics"
 ```
 
 ---
@@ -580,6 +594,7 @@ npx tsx caido-client.ts search 'preset:"API 4xx"' --limit 20
 8. **Create filter presets** for recurring searches to save typing
 9. **Use environments** to store test data (victim IDs, tokens, etc.)
 10. **Output is JSON** - parse response fields as needed
+11. **NEVER use `NOT` in HTTPQL** - it doesn't exist. Use negated operators: `ne`, `ncont`, `nlike`, `nregex`
 
 ## Performance & Context Optimization
 
