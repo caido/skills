@@ -104,7 +104,9 @@ export async function cmdEnvs() {
 
 export async function cmdCreateEnv(name: string) {
   const client = await getClient();
-  const env = await client.environment.create({ name });
+  // SDK's environment.create calls `options.variables.map(...)` and the
+  // schema requires a non-null variables list, so pass an empty array.
+  const env = await client.environment.create({ name, variables: [] });
   console.log(JSON.stringify({ id: env.id, name: env.name }, null, 2));
 }
 

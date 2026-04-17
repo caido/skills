@@ -6,12 +6,27 @@
 import gql from "graphql-tag";
 
 // ── Intercept ──
+// Caido 0.56+: InterceptRequest/ResponseOptions.filter is now a Query union
+// (HTTPQL | StreamQL) that needs subfields; Pause/ResumeInterceptPayload
+// no longer have `request`/`response` fields, only `status`.
 
 export const INTERCEPT_OPTIONS_QUERY = gql`
   query {
     interceptOptions {
-      request { enabled filter }
-      response { enabled filter }
+      request {
+        enabled
+        filter {
+          ... on HTTPQL { code }
+          ... on StreamQL { code }
+        }
+      }
+      response {
+        enabled
+        filter {
+          ... on HTTPQL { code }
+          ... on StreamQL { code }
+        }
+      }
       scope { scopeId }
     }
   }
@@ -19,19 +34,13 @@ export const INTERCEPT_OPTIONS_QUERY = gql`
 
 export const PAUSE_INTERCEPT = gql`
   mutation {
-    pauseIntercept {
-      request { enabled }
-      response { enabled }
-    }
+    pauseIntercept { status }
   }
 `;
 
 export const RESUME_INTERCEPT = gql`
   mutation {
-    resumeIntercept {
-      request { enabled }
-      response { enabled }
-    }
+    resumeIntercept { status }
   }
 `;
 
@@ -68,6 +77,19 @@ export const START_AUTOMATE_TASK = gql`
   mutation($automateSessionId: ID!) {
     startAutomateTask(automateSessionId: $automateSessionId) {
       automateTask { id paused }
+    }
+  }
+`;
+
+// ── Replay: create session with raw source ──
+// Caido 0.56+ types the inner raw field as Blob. SDK 0.2.0's sessions.create
+// still passes the raw string through unencoded, so we issue the mutation
+// ourselves with base64-encoded bytes for send-raw.
+
+export const CREATE_REPLAY_SESSION_RAW = gql`
+  mutation($input: CreateReplaySessionInput!) {
+    createReplaySession(input: $input) {
+      session { id name }
     }
   }
 `;

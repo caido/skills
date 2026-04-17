@@ -7,7 +7,7 @@
     "caido": "tsx caido-client.ts"
   },
   "dependencies": {
-    "@caido/sdk-client": "^0.1.4",
+    "@caido/sdk-client": "^0.2.0",
     "graphql-tag": "^2.12.6",
     "tsx": "^4.19.0"
   }

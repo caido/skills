@@ -6,6 +6,7 @@ import {
   CREATE_AUTOMATE_SESSION,
   GET_AUTOMATE_SESSION,
   START_AUTOMATE_TASK,
+  CREATE_REPLAY_SESSION_RAW,
 } from "../graphql";
 import type { OutputOpts } from "../types";
 
@@ -67,13 +68,20 @@ export async function cmdReplay(requestId: string, rawOverride: string | undefin
 export async function cmdSendRaw(host: string, port: number, tls: boolean, raw: string, opts: OutputOpts) {
   const client = await getClient();
 
-  // Create a blank session
-  const session = await client.replay.sessions.create({
-    requestSource: {
-      raw,
-      connection: { host, port, isTLS: tls },
+  // SDK 0.2.0's sessions.create doesn't base64-encode the raw source, but
+  // Caido 0.56+ types it as Blob. Issue the mutation ourselves with an
+  // encoded payload; replay.send below handles its own encoding correctly.
+  const createResult = await client.graphql.mutation(CREATE_REPLAY_SESSION_RAW, {
+    input: {
+      requestSource: {
+        raw: {
+          connectionInfo: { host, port, isTLS: tls },
+          raw: Buffer.from(raw).toString("base64"),
+        },
+      },
     },
   });
+  const session = (createResult as any).createReplaySession.session;
 
   const result = await client.replay.send(session.id, {
     raw,
