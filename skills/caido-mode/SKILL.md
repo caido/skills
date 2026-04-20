@@ -153,6 +153,32 @@ Outputs a ready-to-use curl command with all headers and body.
 
 ---
 
+## Session Lookup (by tab number or name)
+
+Caido's replay tab number in the UI corresponds directly to the session ID in the API. Renamed tabs can also be looked up by name.
+
+```bash
+# Look up by tab number (instant ID lookup)
+node caido-client.ts get-session 412
+node caido-client.ts get-session 412 --compact
+
+# Look up by name (if the tab was renamed)
+node caido-client.ts get-session "testing_idor"
+
+# List request history within a replay tab
+node caido-client.ts replay-entries 412
+node caido-client.ts replay-entries "testing_idor" --limit 50
+
+# Edit and send from a replay tab's active request (no request-id needed)
+node caido-client.ts edit-session 412 --body '{"test": true}' --compact
+node caido-client.ts edit-session "testing_idor" --path /api/other --compact
+node caido-client.ts edit-session 412 --replace "old_value:::new_value" --compact
+```
+
+**Key insight**: `get-session` + `edit-session` eliminate the need to search through history to find the right request. The user says "replay tab 412" or "the testing_idor tab" and you look it up directly.
+
+---
+
 ## Replay Sessions & Collections
 
 ### Sessions
@@ -585,7 +611,8 @@ npx tsx caido-client.ts search 'preset:"API 4xx"' --limit 20
 ## Instructions for Claude
 
 1. **PREFER `edit` OVER `replay --raw`** - preserves cookies/auth automatically
-2. **Workflow**: Search → find request with valid auth → use that ID for all tests via `edit`
+2. **When user says "replay tab N" or "the X tab"**: Use `get-session N` (or `get-session "name"`) to see it, `edit-session` to modify and send — no search needed
+3. **Workflow**: Search → find request with valid auth → use that ID for all tests via `edit`
 3. **Don't dump raw requests into context** - use `--compact` or `--headers-only` when exploring
 4. **Always check auth first**: `health` to verify connection, then `recent --limit 1`
 5. **ALWAYS NAME REPLAY TABS**: `rename-session <id> "idor-user-profile"`

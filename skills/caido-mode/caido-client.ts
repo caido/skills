@@ -9,7 +9,7 @@ import { parseOutputOpts, DEFAULT_OUTPUT_OPTS } from "./lib/types";
 
 // Commands
 import { cmdSearch, cmdRecent, cmdGet, cmdGetResponse, cmdExportCurl } from "./lib/commands/requests";
-import { cmdReplay, cmdSendRaw, cmdEdit, cmdReplaySessions, cmdCreateSession, cmdRenameSession, cmdDeleteSessions, cmdReplayCollections, cmdCreateCollection, cmdRenameCollection, cmdDeleteCollection, cmdCreateAutomateSession, cmdFuzz } from "./lib/commands/replay";
+import { cmdReplay, cmdSendRaw, cmdEdit, cmdEditSession, cmdGetSession, cmdReplayEntries, cmdReplaySessions, cmdCreateSession, cmdRenameSession, cmdDeleteSessions, cmdReplayCollections, cmdCreateCollection, cmdRenameCollection, cmdDeleteCollection, cmdCreateAutomateSession, cmdFuzz } from "./lib/commands/replay";
 import { cmdFindings, cmdGetFinding, cmdCreateFinding, cmdUpdateFinding } from "./lib/commands/findings";
 import { cmdScopes, cmdCreateScope, cmdUpdateScope, cmdDeleteScope, cmdFilters, cmdCreateFilter, cmdUpdateFilter, cmdDeleteFilter, cmdEnvs, cmdCreateEnv, cmdSelectEnv, cmdEnvSet, cmdDeleteEnv, cmdProjects, cmdSelectProject, cmdHostedFiles, cmdDeleteHostedFile, cmdTasks, cmdCancelTask } from "./lib/commands/management";
 import { cmdInterceptStatus, cmdInterceptSet } from "./lib/commands/intercept";
@@ -58,6 +58,21 @@ Usage:
     --replace <from>:::<to>    Replace text in request (repeatable)
 
   export-curl <request-id>     Export request as curl command
+
+═══════════════════════════════════════════════
+ SESSION LOOKUP (by tab number OR name)
+═══════════════════════════════════════════════
+
+  get-session <id-or-name>     Get replay tab by ID or name (shows active request)
+  replay-entries <id-or-name>  List request history within a replay tab
+    --limit <n>                Max results (default: 20)
+  edit-session <id-or-name>    Edit & send from a replay tab's active request
+    --method <METHOD>          Change HTTP method
+    --path <path>              Change request path
+    --set-header <N:V>         Set header (repeatable)
+    --remove-header <name>     Remove header (repeatable)
+    --body <body>              Set request body
+    --replace <from>:::<to>    Replace text in request (repeatable)
 
 ═══════════════════════════════════════════════
  REPLAY SESSIONS & COLLECTIONS
@@ -300,6 +315,39 @@ async function main() {
     case "export-curl": {
       if (!args[1]) { console.error("Error: request-id required"); process.exit(1); }
       await cmdExportCurl(args[1]);
+      break;
+    }
+
+    // ── Session Lookup ──
+    case "get-session": {
+      if (!args[1]) { console.error("Error: session id or name required"); process.exit(1); }
+      await cmdGetSession(args[1], parseOutputOpts(args, 2));
+      break;
+    }
+
+    case "replay-entries": {
+      if (!args[1]) { console.error("Error: session-id required"); process.exit(1); }
+      let reLimit = 20;
+      for (let i = 2; i < args.length; i++) {
+        if (args[i] === "--limit" && args[i + 1]) { reLimit = parseInt(args[i + 1], 10); i++; }
+      }
+      await cmdReplayEntries(args[1], reLimit, parseOutputOpts(args, 2));
+      break;
+    }
+
+    case "edit-session": {
+      if (!args[1]) { console.error("Error: session id or name required"); process.exit(1); }
+      let esMethod: string | undefined, esPath: string | undefined, esBody: string | undefined;
+      const esSetHeaders: string[] = [], esRemoveHeaders: string[] = [], esReplacements: string[] = [];
+      for (let i = 2; i < args.length; i++) {
+        if (args[i] === "--method" && args[i + 1]) { esMethod = args[i + 1]; i++; }
+        else if (args[i] === "--path" && args[i + 1]) { esPath = args[i + 1]; i++; }
+        else if (args[i] === "--body" && args[i + 1]) { esBody = args[i + 1]; i++; }
+        else if (args[i] === "--set-header" && args[i + 1]) { esSetHeaders.push(args[i + 1]); i++; }
+        else if (args[i] === "--remove-header" && args[i + 1]) { esRemoveHeaders.push(args[i + 1]); i++; }
+        else if (args[i] === "--replace" && args[i + 1]) { esReplacements.push(args[i + 1]); i++; }
+      }
+      await cmdEditSession(args[1], { method: esMethod, path: esPath, body: esBody, setHeaders: esSetHeaders, removeHeaders: esRemoveHeaders, replacements: esReplacements }, parseOutputOpts(args, 2));
       break;
     }
 

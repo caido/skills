@@ -10,6 +10,35 @@ import {
 } from "../graphql";
 import type { OutputOpts } from "../types";
 
+// ── Resolve session by ID or name ──
+
+async function resolveSession(client: any, idOrName: string) {
+  // Try direct ID lookup first (may throw on non-numeric strings)
+  try {
+    const byId = await client.replay.sessions.get(idOrName);
+    if (byId) return byId;
+  } catch {
+    // ID lookup failed (e.g., non-numeric string) — fall through to name search
+  }
+
+  // Fall back to searching by name (paginate in chunks of 100)
+  let after: string | undefined;
+  while (true) {
+    const page = after
+      ? await client.replay.sessions.list().after(after, 100)
+      : await client.replay.sessions.list().first(100);
+
+    for (const edge of page.edges) {
+      if (edge.node.name === idOrName) return edge.node;
+    }
+
+    if (!page.pageInfo.hasNextPage) break;
+    after = page.pageInfo.endCursor;
+  }
+
+  return undefined;
+}
+
 // ── Replay ──
 
 export async function cmdReplay(requestId: string, rawOverride: string | undefined, opts: OutputOpts) {
@@ -213,6 +242,247 @@ export async function cmdEdit(
 
   const output: Record<string, any> = {
     sessionId: session.id,
+    status: result.status,
+    error: result.error,
+  };
+
+  if (!opts.noRequest) {
+    output.modifiedRequest = formatHttpRaw(modifiedRaw, opts);
+  }
+
+  if (result.entry?.response) {
+    output.response = {
+      statusCode: result.entry.response.statusCode,
+      roundtrip: result.entry.response.roundtripTime,
+      length: result.entry.response.length,
+    };
+    if (result.entry.response.raw) {
+      output.response.raw = formatHttpRaw(decodeRaw(result.entry.response.raw), opts);
+    }
+  }
+
+  console.log(JSON.stringify(output, null, 2));
+}
+
+// ── Get Session (by ID — matches tab number in UI) ──
+
+export async function cmdGetSession(sessionId: string, opts: OutputOpts) {
+  const client = await getClient();
+  const session = await resolveSession(client, sessionId);
+
+  if (!session) {
+    console.error(`Replay session "${sessionId}" not found (tried ID and name lookup)`);
+    process.exit(1);
+  }
+
+  const output: Record<string, any> = {
+    id: session.id,
+    name: session.name,
+    collectionId: session.collectionId,
+    activeEntryId: session.activeEntryId,
+  };
+
+  // If there's an active entry, fetch its details
+  if (session.activeEntryId) {
+    const entry = await client.replay.entries.get(session.activeEntryId);
+    if (entry) {
+      output.activeEntry = {
+        id: entry.id,
+        sessionId: entry.sessionId,
+        connection: {
+          host: entry.connection.host,
+          port: entry.connection.port,
+          isTLS: (entry.connection as any).isTLS ?? (entry.connection as any).isTls,
+        },
+        createdAt: entry.createdAt,
+        error: entry.error,
+      };
+
+      if (entry.request) {
+        output.activeEntry.request = {
+          id: entry.request.id,
+          method: entry.request.method,
+          host: entry.request.host,
+          path: entry.request.path,
+          port: entry.request.port,
+          isTls: entry.request.isTls,
+        };
+      }
+
+      if (entry.raw) {
+        output.activeEntry.raw = formatHttpRaw(decodeRaw(entry.raw), opts);
+      }
+
+      if (entry.response) {
+        output.activeEntry.response = {
+          statusCode: entry.response.statusCode,
+          roundtrip: entry.response.roundtripTime,
+          length: entry.response.length,
+        };
+        if (entry.response.raw) {
+          output.activeEntry.response.raw = formatHttpRaw(decodeRaw(entry.response.raw), opts);
+        }
+      }
+    }
+  }
+
+  console.log(JSON.stringify(output, null, 2));
+}
+
+// ── Replay Entries (list entries within a session) ──
+
+export async function cmdReplayEntries(sessionId: string, limit: number, opts: OutputOpts) {
+  const client = await getClient();
+  const session = await resolveSession(client, sessionId);
+
+  if (!session) {
+    console.error(`Replay session "${sessionId}" not found (tried ID and name lookup)`);
+    process.exit(1);
+  }
+
+  const connection = await session.entries().includeRaw({ request: false, response: false, replay: false }).first(limit);
+
+  const results = connection.edges.map(e => ({
+    id: e.node.id,
+    sessionId: e.node.sessionId,
+    createdAt: e.node.createdAt,
+    error: e.node.error,
+    connection: {
+      host: e.node.connection.host,
+      port: e.node.connection.port,
+      isTLS: (e.node.connection as any).isTLS ?? (e.node.connection as any).isTls,
+    },
+    request: e.node.request ? {
+      method: e.node.request.method,
+      host: e.node.request.host,
+      path: e.node.request.path,
+      statusCode: e.node.response?.statusCode,
+      roundtrip: e.node.response?.roundtripTime,
+      responseLength: e.node.response?.length,
+    } : undefined,
+  }));
+
+  console.log(JSON.stringify({
+    sessionId,
+    sessionName: session.name,
+    activeEntryId: session.activeEntryId,
+    results,
+    count: results.length,
+  }, null, 2));
+}
+
+// ── Edit from Session (use active entry as source) ──
+
+export async function cmdEditSession(
+  sessionIdOrName: string,
+  edits: {
+    method?: string;
+    path?: string;
+    setHeaders: string[];
+    removeHeaders: string[];
+    body?: string;
+    replacements: string[];
+  },
+  opts: OutputOpts,
+) {
+  const client = await getClient();
+  const session = await resolveSession(client, sessionIdOrName);
+
+  if (!session) {
+    console.error(`Replay session "${sessionIdOrName}" not found (tried ID and name lookup)`);
+    process.exit(1);
+  }
+
+  const sessionId = session.id;
+
+  if (!session.activeEntryId) {
+    console.error(`Session ${sessionId} has no active entry`);
+    process.exit(1);
+  }
+
+  const entry = await client.replay.entries.get(session.activeEntryId);
+  if (!entry || !entry.raw) {
+    console.error(`Could not get raw data for active entry ${session.activeEntryId}`);
+    process.exit(1);
+  }
+
+  let raw = decodeRaw(entry.raw);
+  if (!raw) {
+    console.error("No raw data for the active entry");
+    process.exit(1);
+  }
+
+  // Apply replacements
+  for (const rep of edits.replacements) {
+    const [from, to] = rep.split(":::");
+    if (from && to !== undefined) {
+      raw = raw.replaceAll(from, to);
+    }
+  }
+
+  // Parse request line and headers
+  const lineEnd = raw.indexOf("\r\n") >= 0 ? "\r\n" : "\n";
+  const parts = raw.split(lineEnd + lineEnd);
+  const headerBlock = parts[0];
+  let bodyPart = parts.slice(1).join(lineEnd + lineEnd);
+
+  const headerLines = headerBlock.split(lineEnd);
+  let requestLine = headerLines[0];
+  let headers = headerLines.slice(1);
+
+  // Modify method
+  if (edits.method) {
+    const spaceIdx = requestLine.indexOf(" ");
+    if (spaceIdx > 0) {
+      requestLine = edits.method + requestLine.substring(spaceIdx);
+    }
+  }
+
+  // Modify path
+  if (edits.path) {
+    const firstSpace = requestLine.indexOf(" ");
+    const lastSpace = requestLine.lastIndexOf(" ");
+    if (firstSpace > 0 && lastSpace > firstSpace) {
+      requestLine = requestLine.substring(0, firstSpace + 1) + edits.path + requestLine.substring(lastSpace);
+    }
+  }
+
+  // Remove headers
+  for (const name of edits.removeHeaders) {
+    headers = headers.filter(h => !h.toLowerCase().startsWith(name.toLowerCase() + ":"));
+  }
+
+  // Set headers
+  for (const header of edits.setHeaders) {
+    const colonIdx = header.indexOf(":");
+    if (colonIdx > 0) {
+      const name = header.substring(0, colonIdx).trim();
+      headers = headers.filter(h => !h.toLowerCase().startsWith(name.toLowerCase() + ":"));
+      headers.push(header.trim());
+    }
+  }
+
+  // Set body
+  if (edits.body !== undefined) {
+    bodyPart = edits.body;
+    const clBytes = new TextEncoder().encode(bodyPart).length;
+    headers = headers.filter(h => !h.toLowerCase().startsWith("content-length:"));
+    headers.push(`Content-Length: ${clBytes}`);
+  }
+
+  const modifiedRaw = [requestLine, ...headers].join(lineEnd) + lineEnd + lineEnd + bodyPart;
+
+  const result = await client.replay.send(sessionId, {
+    raw: modifiedRaw,
+    connection: {
+      host: entry.connection.host,
+      port: entry.connection.port,
+      isTLS: (entry.connection as any).isTLS ?? (entry.connection as any).isTls,
+    },
+  });
+
+  const output: Record<string, any> = {
+    sessionId,
     status: result.status,
     error: result.error,
   };
