@@ -64,7 +64,7 @@ npx tsx ~/.claude/skills/caido-mode/caido-client.ts auth-status
 
 The SDK uses a device code flow internally — the PAT auto-approves it and receives an access token + refresh token. A custom `SecretsTokenCache` (implementing the SDK's `TokenCache` interface) persists these tokens to secrets.json so they survive across CLI invocations.
 
-Auth resolution: `CAIDO_PAT` env var → `secrets.json` PAT → error with setup instructions
+Auth resolution: `CAIDO_PAT` env var → `secrets.json` PAT → unexpired `secrets.json` `cachedToken` → error with setup instructions
 
 ## CLI Tool
 
