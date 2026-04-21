@@ -7,9 +7,35 @@ import { join, dirname } from "path";
 
 const SECRETS_PATH = join(homedir(), ".claude", "config", "secrets.json");
 
+export type AuthMode = "pat" | "cached-token";
+
 export interface CaidoConfig {
   url: string;
-  pat: string;
+  pat: string;         // empty string when authMode === "cached-token"
+  authMode: AuthMode;
+}
+
+export interface CaidoSecrets {
+  url?: string;
+  pat?: string;
+  cachedToken?: { accessToken?: string; expiresAt?: string };
+}
+
+function readCaidoSecrets(): CaidoSecrets {
+  if (!existsSync(SECRETS_PATH)) return {};
+  try {
+    const parsed = JSON.parse(readFileSync(SECRETS_PATH, "utf-8"));
+    return (parsed?.caido ?? {}) as CaidoSecrets;
+  } catch {
+    return {};
+  }
+}
+
+export function isCachedTokenValid(secrets: CaidoSecrets): boolean {
+  const token = secrets.cachedToken;
+  if (!token?.accessToken || !token.expiresAt) return false;
+  const exp = Date.parse(token.expiresAt);
+  return Number.isFinite(exp) && exp > Date.now();
 }
 
 /**
@@ -65,25 +91,33 @@ export class SecretsTokenCache implements TokenCache {
 
 export function loadConfig(): CaidoConfig {
   const url = process.env.CAIDO_URL || "http://localhost:8080";
-  const pat = process.env.CAIDO_PAT;
+  const envPat = process.env.CAIDO_PAT;
 
-  if (pat) return { url, pat };
+  if (envPat) return { url, pat: envPat, authMode: "pat" };
 
-  if (existsSync(SECRETS_PATH)) {
-    try {
-      const secrets = JSON.parse(readFileSync(SECRETS_PATH, "utf-8"));
-      if (secrets.caido?.pat) {
-        return { url: secrets.caido.url || url, pat: secrets.caido.pat };
-      }
-    } catch {}
+  const secrets = readCaidoSecrets();
+  const resolvedUrl = secrets.url || url;
+
+  if (secrets.pat) {
+    return { url: resolvedUrl, pat: secrets.pat, authMode: "pat" };
   }
 
-  console.error("Error: No Caido PAT found.\n");
-  console.error("Setup:");
-  console.error("  1. Open Caido → Settings → Developer → Personal Access Tokens");
-  console.error("  2. Create a token");
-  console.error("  3. Run: npx tsx caido-client.ts setup <token>");
-  console.error("  Or set env var: export CAIDO_PAT=<token>");
+  const tokenValid = isCachedTokenValid(secrets);
+  if (tokenValid) {
+    return { url: resolvedUrl, pat: "", authMode: "cached-token" };
+  }
+
+  const hasExpired = !!secrets.cachedToken?.accessToken;
+  if (hasExpired) {
+    console.error(`Error: Cached access token expired at ${secrets.cachedToken?.expiresAt}.`);
+    console.error("Re-run: npx tsx caido-client.ts setup <pat>");
+  } else {
+    console.error("Error: No Caido auth found.");
+    console.error("  - No PAT in env (CAIDO_PAT) or secrets.json");
+    console.error("  - No unexpired cached token in secrets.json");
+    console.error("");
+    console.error("Setup: npx tsx caido-client.ts setup <pat>");
+  }
   process.exit(1);
 }
 
