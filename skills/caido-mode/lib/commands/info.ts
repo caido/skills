@@ -3,7 +3,7 @@
 import { Client } from "@caido/sdk-client";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { dirname } from "path";
-import { getClient, loadConfig, SecretsTokenCache, SECRETS_PATH } from "../client";
+import { getClient, loadConfig, SecretsTokenCache, SECRETS_PATH, isCachedTokenValid, type CaidoSecrets } from "../client";
 import { PLUGIN_PACKAGES_QUERY } from "../graphql";
 
 export async function cmdViewer() {
@@ -69,6 +69,16 @@ export async function cmdSetup(pat: string, url: string) {
 
 export async function cmdAuthStatus() {
   const config = loadConfig();
+
+  const rawSecrets = existsSync(SECRETS_PATH)
+    ? (() => { try { return JSON.parse(readFileSync(SECRETS_PATH, "utf-8")); } catch { return {}; } })()
+    : {};
+  const caidoSecrets: CaidoSecrets = (rawSecrets?.caido ?? {}) as CaidoSecrets;
+
+  const cachedExpiresAt: string | null = caidoSecrets.cachedToken?.expiresAt ?? null;
+  const cachedTokenValid = isCachedTokenValid(caidoSecrets);
+  const hasPat = !!caidoSecrets.pat || !!process.env.CAIDO_PAT;
+
   const statusCache = new SecretsTokenCache();
   const client = new Client({
     url: config.url,
@@ -81,15 +91,23 @@ export async function cmdAuthStatus() {
     const health = await client.health();
     console.log(JSON.stringify({
       authenticated: true,
+      authMode: config.authMode,
+      hasPat,
+      cachedTokenExpiresAt: cachedExpiresAt,
+      cachedTokenValid,
+      url: config.url,
       user: viewer,
       health,
-      url: config.url,
     }, null, 2));
   } catch (err: any) {
     console.log(JSON.stringify({
       authenticated: false,
-      error: err.message,
+      authMode: config.authMode,
+      hasPat,
+      cachedTokenExpiresAt: cachedExpiresAt,
+      cachedTokenValid,
       url: config.url,
+      error: err.message,
     }, null, 2));
   }
 }

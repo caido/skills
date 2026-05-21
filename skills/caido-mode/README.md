@@ -15,8 +15,9 @@ Cookies and auth tokens are huge. Instead of copy-pasting 2KB of session cookies
 | Category | Commands |
 |----------|----------|
 | **HTTP History** | `search`, `recent`, `get`, `get-response`, `export-curl` |
-| **Edit & Replay** | `edit`, `replay`, `send-raw` |
-| **Sessions** | `create-session`, `rename-session`, `replay-sessions`, `delete-sessions` |
+| **Edit & Replay** | `edit`, `replay`, `send-raw`, `edit-session` |
+| **Replay Tab Lookup** | `get-session`, `replay-entries`, `session-entries` |
+| **Sessions** | `create-session`, `rename-session`, `move-session`, `replay-sessions`, `delete-sessions` |
 | **Collections** | `replay-collections`, `create-collection`, `rename-collection`, `delete-collection` |
 | **Fuzzing** | `create-automate-session`, `fuzz` |
 | **Scopes** | `scopes`, `create-scope`, `update-scope`, `delete-scope` |
@@ -50,7 +51,7 @@ npx tsx caido-client.ts recent --limit 1
 export CAIDO_PAT=<your-pat>
 ```
 
-The `setup` command uses the SDK's device code flow (auto-approved by your PAT) to obtain an access token, then saves both the PAT and cached token to `~/.claude/config/secrets.json` via a custom `TokenCache` implementation. Subsequent runs load the cached token directly.
+The `setup` command uses the SDK's device code flow (auto-approved by your PAT) to obtain an access token, then saves both the PAT and cached token to `~/.claude/config/secrets.json` via a custom `TokenCache` implementation. Subsequent runs load the cached token directly, and a valid cached token can be used even when the PAT is absent.
 
 ## File Structure
 
@@ -63,7 +64,7 @@ lib/
   types.ts               # Shared types (OutputOpts)
   commands/
     requests.ts          # search, recent, get, get-response, export-curl
-    replay.ts            # replay, send-raw, edit, sessions, collections, automate, fuzz
+    replay.ts            # replay, send-raw, edit, replay-tab lookup, sessions, collections, automate, fuzz
     findings.ts          # findings, get-finding, create-finding, update-finding
     management.ts        # scopes, filters, environments, projects, hosted-files, tasks
     intercept.ts         # intercept-status, intercept-enable, intercept-disable
@@ -80,6 +81,7 @@ All commands output JSON. Run `npx tsx caido-client.ts --help` for the complete 
 # Search with HTTPQL (Caido's query language)
 npx tsx caido-client.ts search 'req.method.eq:"POST" AND resp.code.eq:200'
 npx tsx caido-client.ts search 'req.host.cont:"api"' --limit 50
+npx tsx caido-client.ts search 'req.host.cont:"api"' --desc --limit 10
 
 # Get recent requests
 npx tsx caido-client.ts recent --limit 10
@@ -108,7 +110,36 @@ npx tsx caido-client.ts edit <id> --remove-header "X-CSRF-Token"
 
 # Find/replace text anywhere in the request
 npx tsx caido-client.ts edit <id> --replace "user123:::user456"
+
+# Reuse a replay session while iterating
+npx tsx caido-client.ts edit <id> --path /api/user/456 --session <session-id> --compact
 ```
+
+`edit`, `replay`, and `send-raw` support connection overrides for virtual-host and upstream routing tests: `--sni`, `--connect-host`, `--connect-port`, `--connect-tls`, and `--connect-no-tls`.
+
+### Replay Tab Lookup
+
+Work directly from an existing Caido replay tab/session.
+
+```bash
+npx tsx caido-client.ts get-session <session-id-or-name> --compact
+npx tsx caido-client.ts replay-entries <session-id-or-name> --limit 20
+npx tsx caido-client.ts replay-entries <session-id-or-name> --raw --compact
+npx tsx caido-client.ts edit-session <session-id-or-name> --body '{"test":true}' --compact
+```
+
+`session-entries` is accepted as an alias for `replay-entries`.
+
+### Raw Replay
+
+```bash
+npx tsx caido-client.ts send-raw --host example.com --raw "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"
+npx tsx caido-client.ts send-raw --host example.com --raw @request.txt --name "G /"
+cat request.txt | npx tsx caido-client.ts send-raw --host example.com --raw -
+npx tsx caido-client.ts replay <id> --connect-host 10.0.0.5 --connect-port 8443 --sni example.com
+```
+
+`--raw` accepts a string with C-style escapes, `@file`, or `-` for stdin.
 
 ### Export to curl
 
@@ -160,7 +191,9 @@ npx tsx caido-client.ts delete-env <id>
 
 ```bash
 npx tsx caido-client.ts create-session <request-id>
+npx tsx caido-client.ts create-session <request-id> --collection <collection-id>
 npx tsx caido-client.ts rename-session <session-id> "idor-user-profile"
+npx tsx caido-client.ts move-session <session-id> <collection-id>
 npx tsx caido-client.ts replay-sessions
 npx tsx caido-client.ts delete-sessions <id1>,<id2>
 
@@ -226,7 +259,7 @@ preset:"My Filter"                            # Use saved filter preset
 
 ## Architecture
 
-Built on `@caido/sdk-client` v0.1.4+. Multi-file architecture with clean separation:
+Built on `@caido/sdk-client` v0.2.0+. Multi-file architecture with clean separation:
 
 - **High-level SDK methods** for most features (requests, replay, findings, scopes, filters, environments, projects, hosted files, tasks, user)
 - **`client.graphql.query()`/`mutation()`** with `gql` tagged templates for features not yet in SDK (intercept, plugins, automate/fuzz)

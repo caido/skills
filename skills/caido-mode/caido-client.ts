@@ -9,13 +9,40 @@ import { parseOutputOpts, DEFAULT_OUTPUT_OPTS } from "./lib/types";
 
 // Commands
 import { cmdSearch, cmdRecent, cmdGet, cmdGetResponse, cmdExportCurl } from "./lib/commands/requests";
-import { cmdReplay, cmdSendRaw, cmdEdit, cmdReplaySessions, cmdCreateSession, cmdRenameSession, cmdDeleteSessions, cmdReplayCollections, cmdCreateCollection, cmdRenameCollection, cmdDeleteCollection, cmdCreateAutomateSession, cmdFuzz } from "./lib/commands/replay";
+import { cmdReplay, cmdSendRaw, cmdEdit, cmdGetSession, cmdReplayEntries, cmdEditSession, cmdReplaySessions, cmdCreateSession, cmdRenameSession, cmdMoveSession, cmdDeleteSessions, cmdReplayCollections, cmdCreateCollection, cmdRenameCollection, cmdDeleteCollection, cmdCreateAutomateSession, cmdFuzz } from "./lib/commands/replay";
+import type { ConnectionOverrides } from "./lib/commands/replay";
 import { cmdFindings, cmdGetFinding, cmdCreateFinding, cmdUpdateFinding } from "./lib/commands/findings";
 import { cmdScopes, cmdCreateScope, cmdUpdateScope, cmdDeleteScope, cmdFilters, cmdCreateFilter, cmdUpdateFilter, cmdDeleteFilter, cmdEnvs, cmdCreateEnv, cmdSelectEnv, cmdEnvSet, cmdDeleteEnv, cmdProjects, cmdSelectProject, cmdHostedFiles, cmdDeleteHostedFile, cmdTasks, cmdCancelTask } from "./lib/commands/management";
 import { cmdInterceptStatus, cmdInterceptSet } from "./lib/commands/intercept";
 import { cmdViewer, cmdPlugins, cmdHealth, cmdSetup, cmdAuthStatus } from "./lib/commands/info";
 
 const DEBUG = process.env.DEBUG === "1";
+
+function parseConnectionOverrides(args: string[], startIdx: number): ConnectionOverrides {
+  const overrides: ConnectionOverrides = {};
+  for (let i = startIdx; i < args.length; i++) {
+    if (args[i] === "--sni" && args[i + 1]) { overrides.sni = args[i + 1]; i++; }
+    else if (args[i] === "--connect-host" && args[i + 1]) { overrides.connectHost = args[i + 1]; i++; }
+    else if (args[i] === "--connect-port" && args[i + 1]) { overrides.connectPort = parseInt(args[i + 1], 10); i++; }
+    else if (args[i] === "--connect-tls") { overrides.connectTls = true; }
+    else if (args[i] === "--connect-no-tls") { overrides.connectTls = false; }
+  }
+  return overrides;
+}
+
+function parseCollectionId(args: string[], startIdx: number): string | undefined {
+  for (let i = startIdx; i < args.length; i++) {
+    if (args[i] === "--collection" && args[i + 1]) return args[i + 1];
+  }
+  return undefined;
+}
+
+function parseSessionName(args: string[], startIdx: number): string | undefined {
+  for (let i = startIdx; i < args.length; i++) {
+    if (args[i] === "--name" && args[i + 1]) return args[i + 1];
+  }
+  return undefined;
+}
 
 function printUsage() {
   console.log(`
@@ -32,6 +59,7 @@ Usage:
     --limit <n>                Max results (default: 20)
     --after <cursor>           Pagination cursor
     --ids-only                 Output only request IDs
+    --desc / --latest          Sort newest first by request ID
 
   recent                       Get recent requests
     --limit <n>                Max results (default: 20)
@@ -41,13 +69,26 @@ Usage:
   get-response <request-id>    Get just the response for a request
 
   replay <request-id>          Replay a request (blocks until response)
-    --raw <raw-request>        Override with custom raw request
+    --raw <str|@file|->        Override with custom raw request
+    --collection <id>          Add session to this collection
+    --sni <hostname>           TLS Server Name Indication override
+    --connect-host <host>      Connect to a different host
+    --connect-port <port>      Connect to a different port
+    --connect-tls              Force TLS on override connection
+    --connect-no-tls           Force plain HTTP on override connection
 
   send-raw                     Send a custom raw request
     --host <hostname>          Target host (required)
     --port <port>              Target port (default: 443)
     --tls / --no-tls           Use TLS (default: true)
-    --raw <raw-request>        Raw HTTP request (required)
+    --raw <str|@file|->        Raw HTTP request (required)
+    --collection <id>          Add session to this collection
+    --name <session-name>      Rename the replay session
+    --sni <hostname>           TLS Server Name Indication override
+    --connect-host <host>      Connect to a different host
+    --connect-port <port>      Connect to a different port
+    --connect-tls              Force TLS on override connection
+    --connect-no-tls           Force plain HTTP on override connection
 
   edit <request-id>            Edit and replay a request (keeps cookies/auth)
     --method <METHOD>          Change HTTP method
@@ -56,15 +97,40 @@ Usage:
     --remove-header <name>     Remove header (repeatable)
     --body <body>              Set request body
     --replace <from>:::<to>    Replace text in request (repeatable)
+    --session <id>             Reuse an existing replay session
+    --collection <id>          Add new session to this collection
+    --sni <hostname>           TLS Server Name Indication override
+    --connect-host <host>      Connect to a different host
+    --connect-port <port>      Connect to a different port
+    --connect-tls              Force TLS on override connection
+    --connect-no-tls           Force plain HTTP on override connection
 
   export-curl <request-id>     Export request as curl command
+
+═══════════════════════════════════════════════
+ REPLAY TAB LOOKUP
+═══════════════════════════════════════════════
+
+  get-session <id-or-name>     Get a replay session and active entry
+  replay-entries <id-or-name>  List request history within a replay session
+    --limit <n>                Max results (default: 20)
+    --raw                      Include raw replay/request/response data
+  edit-session <id-or-name>    Edit and send from a session's active entry
+    --method <METHOD>          Change HTTP method
+    --path <path>              Change request path
+    --set-header <N:V>         Set header (repeatable)
+    --remove-header <name>     Remove header (repeatable)
+    --body <body>              Set request body
+    --replace <from>:::<to>    Replace text in request (repeatable)
 
 ═══════════════════════════════════════════════
  REPLAY SESSIONS & COLLECTIONS
 ═══════════════════════════════════════════════
 
   create-session <request-id>  Create a replay session from a request
+    --collection <id>          Add session to this collection
   rename-session <id> <name>   Rename a replay session
+  move-session <id> <coll-id>  Move a replay session to a collection
   replay-sessions              List replay sessions
     --limit <n>                Max results (default: 20)
   delete-sessions <id,id,...>  Delete replay sessions
@@ -198,8 +264,11 @@ Usage:
     export CAIDO_URL=http://localhost:8080
 
 Examples:
-  npx tsx caido-client.ts search 'req.method.eq:"POST"' --limit 50
-  npx tsx caido-client.ts edit 12345 --path /api/admin --method POST
+  npx tsx caido-client.ts search 'req.method.eq:"POST"' --desc --limit 50
+  npx tsx caido-client.ts edit 12345 --path /api/admin --method POST --session 412
+  npx tsx caido-client.ts edit-session 412 --body '{"test":true}' --compact
+  npx tsx caido-client.ts send-raw --host target.com --raw @request.txt --name "Po /api/check"
+  cat request.txt | npx tsx caido-client.ts send-raw --host target.com --raw -
   npx tsx caido-client.ts create-finding 12345 --title "IDOR" --reporter "rez0"
   npx tsx caido-client.ts create-scope "Target" --allow "*.example.com"
   npx tsx caido-client.ts replay-sessions --limit 10
@@ -224,12 +293,14 @@ async function main() {
       let limit = 20;
       let after: string | undefined;
       let idsOnly = false;
+      let desc = false;
       for (let i = 2; i < args.length; i++) {
         if (args[i] === "--limit" && args[i + 1]) { limit = parseInt(args[i + 1], 10); i++; }
         else if (args[i] === "--after" && args[i + 1]) { after = args[i + 1]; i++; }
         else if (args[i] === "--ids-only") { idsOnly = true; }
+        else if (args[i] === "--desc" || args[i] === "--latest") { desc = true; }
       }
-      await cmdSearch(filter, limit, after, idsOnly);
+      await cmdSearch(filter, limit, after, idsOnly, desc);
       break;
     }
 
@@ -260,7 +331,13 @@ async function main() {
       for (let i = 2; i < args.length; i++) {
         if (args[i] === "--raw" && args[i + 1]) { rawOverride = args[i + 1]; i++; }
       }
-      await cmdReplay(args[1], rawOverride, parseOutputOpts(args, 2));
+      await cmdReplay(
+        args[1],
+        rawOverride,
+        parseOutputOpts(args, 2),
+        parseConnectionOverrides(args, 2),
+        parseCollectionId(args, 2),
+      );
       break;
     }
 
@@ -277,13 +354,22 @@ async function main() {
         console.error("Error: --host and --raw are required");
         process.exit(1);
       }
-      await cmdSendRaw(host, port, tls, raw, parseOutputOpts(args, 1));
+      await cmdSendRaw(
+        host,
+        port,
+        tls,
+        raw,
+        parseOutputOpts(args, 1),
+        parseConnectionOverrides(args, 1),
+        parseCollectionId(args, 1),
+        parseSessionName(args, 1),
+      );
       break;
     }
 
     case "edit": {
       if (!args[1]) { console.error("Error: request-id required"); process.exit(1); }
-      let method: string | undefined, path: string | undefined, body: string | undefined;
+      let method: string | undefined, path: string | undefined, body: string | undefined, sessionId: string | undefined;
       const setHeaders: string[] = [], removeHeaders: string[] = [], replacements: string[] = [];
       for (let i = 2; i < args.length; i++) {
         if (args[i] === "--method" && args[i + 1]) { method = args[i + 1]; i++; }
@@ -292,8 +378,15 @@ async function main() {
         else if (args[i] === "--set-header" && args[i + 1]) { setHeaders.push(args[i + 1]); i++; }
         else if (args[i] === "--remove-header" && args[i + 1]) { removeHeaders.push(args[i + 1]); i++; }
         else if (args[i] === "--replace" && args[i + 1]) { replacements.push(args[i + 1]); i++; }
+        else if (args[i] === "--session" && args[i + 1]) { sessionId = args[i + 1]; i++; }
       }
-      await cmdEdit(args[1], { method, path, body, setHeaders, removeHeaders, replacements }, parseOutputOpts(args, 2));
+      await cmdEdit(
+        args[1],
+        { method, path, body, setHeaders, removeHeaders, replacements, sessionId },
+        parseOutputOpts(args, 2),
+        parseConnectionOverrides(args, 2),
+        parseCollectionId(args, 2),
+      );
       break;
     }
 
@@ -303,16 +396,63 @@ async function main() {
       break;
     }
 
+    // ── Replay Tab Lookup ──
+    case "get-session": {
+      if (!args[1]) { console.error("Error: session id or name required"); process.exit(1); }
+      await cmdGetSession(args[1], parseOutputOpts(args, 2));
+      break;
+    }
+
+    case "replay-entries":
+    case "session-entries": {
+      if (!args[1]) { console.error("Error: session id or name required"); process.exit(1); }
+      let limit = 20;
+      let includeRaw = false;
+      for (let i = 2; i < args.length; i++) {
+        if (args[i] === "--limit" && args[i + 1]) { limit = parseInt(args[i + 1], 10); i++; }
+        else if (args[i] === "--raw") { includeRaw = true; }
+      }
+      await cmdReplayEntries(args[1], limit, parseOutputOpts(args, 2), includeRaw);
+      break;
+    }
+
+    case "edit-session": {
+      if (!args[1]) { console.error("Error: session id or name required"); process.exit(1); }
+      let esMethod: string | undefined, esPath: string | undefined, esBody: string | undefined;
+      const esSetHeaders: string[] = [], esRemoveHeaders: string[] = [], esReplacements: string[] = [];
+      for (let i = 2; i < args.length; i++) {
+        if (args[i] === "--method" && args[i + 1]) { esMethod = args[i + 1]; i++; }
+        else if (args[i] === "--path" && args[i + 1]) { esPath = args[i + 1]; i++; }
+        else if (args[i] === "--body" && args[i + 1]) { esBody = args[i + 1]; i++; }
+        else if (args[i] === "--set-header" && args[i + 1]) { esSetHeaders.push(args[i + 1]); i++; }
+        else if (args[i] === "--remove-header" && args[i + 1]) { esRemoveHeaders.push(args[i + 1]); i++; }
+        else if (args[i] === "--replace" && args[i + 1]) { esReplacements.push(args[i + 1]); i++; }
+      }
+      await cmdEditSession(
+        args[1],
+        { method: esMethod, path: esPath, body: esBody, setHeaders: esSetHeaders, removeHeaders: esRemoveHeaders, replacements: esReplacements },
+        parseOutputOpts(args, 2),
+        parseConnectionOverrides(args, 2),
+      );
+      break;
+    }
+
     // ── Replay Sessions ──
     case "create-session": {
       if (!args[1]) { console.error("Error: request-id required"); process.exit(1); }
-      await cmdCreateSession(args[1]);
+      await cmdCreateSession(args[1], parseCollectionId(args, 2));
       break;
     }
 
     case "rename-session": {
       if (!args[1] || !args[2]) { console.error("Error: session-id and name required"); process.exit(1); }
       await cmdRenameSession(args[1], args[2]);
+      break;
+    }
+
+    case "move-session": {
+      if (!args[1] || !args[2]) { console.error("Error: session-id and collection-id required"); process.exit(1); }
+      await cmdMoveSession(args[1], args[2]);
       break;
     }
 
