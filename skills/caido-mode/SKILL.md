@@ -52,7 +52,7 @@ npx tsx ~/.claude/skills/caido-mode/caido-client.ts setup <pat> http://192.168.1
 export CAIDO_PAT=caido_xxxxx
 ```
 
-The `setup` command validates the PAT via the SDK (which exchanges it for an access token), then saves both the PAT and the cached access token to `~/.claude/config/secrets.json`. Subsequent runs load the cached token directly, skipping the PAT exchange.
+The `setup` command validates the PAT via the SDK (which exchanges it for an access token), then saves both the PAT and the cached access token to `~/.claude/config/secrets.json`. Subsequent runs load the cached token directly, and a valid cached token can be used even when the PAT is absent.
 
 ### Check Status
 
@@ -64,7 +64,7 @@ npx tsx ~/.claude/skills/caido-mode/caido-client.ts auth-status
 
 The SDK uses a device code flow internally — the PAT auto-approves it and receives an access token + refresh token. A custom `SecretsTokenCache` (implementing the SDK's `TokenCache` interface) persists these tokens to secrets.json so they survive across CLI invocations.
 
-Auth resolution: `CAIDO_PAT` env var → `secrets.json` PAT → error with setup instructions
+Auth resolution: `CAIDO_PAT` env var → `secrets.json` PAT → valid cached access token → error with setup instructions
 
 ## CLI Tool
 
@@ -79,6 +79,7 @@ Located at `~/.claude/skills/caido-mode/caido-client.ts`. All commands output JS
 ```bash
 npx tsx caido-client.ts search 'req.method.eq:"POST" AND resp.code.eq:200'
 npx tsx caido-client.ts search 'req.host.cont:"api"' --limit 50
+npx tsx caido-client.ts search 'req.host.cont:"api"' --desc --limit 10
 npx tsx caido-client.ts search 'req.path.cont:"/admin"' --ids-only
 npx tsx caido-client.ts search 'resp.raw.cont:"password"' --after <cursor>
 ```
@@ -119,6 +120,9 @@ npx tsx caido-client.ts edit <id> --replace "user123:::user456"
 
 # Combine multiple edits
 npx tsx caido-client.ts edit <id> --method PUT --path /api/admin --body '{"role":"admin"}' --compact
+
+# Reuse an existing replay tab/session for repeated probes
+npx tsx caido-client.ts edit <id> --path /api/user/1001 --session <session-id> --compact
 ```
 
 | Option | Description |
@@ -129,6 +133,12 @@ npx tsx caido-client.ts edit <id> --method PUT --path /api/admin --body '{"role"
 | `--remove-header <Name>` | Remove a header (repeatable) |
 | `--body <content>` | Set request body (auto-updates Content-Length) |
 | `--replace <from>:::<to>` | Find/replace text anywhere in request (repeatable) |
+| `--session <id>` | Reuse an existing replay session instead of creating a new tab |
+| `--collection <id>` | Put a newly created replay session in a collection |
+| `--sni <host>` | Override TLS SNI |
+| `--connect-host <host>` | Connect to a different host while preserving the HTTP request |
+| `--connect-port <port>` | Connect to a different port |
+| `--connect-tls` / `--connect-no-tls` | Force TLS/plaintext for the connection |
 
 ### replay / send-raw - Send requests
 
@@ -141,7 +151,14 @@ npx tsx caido-client.ts replay <id> --raw "GET /modified HTTP/1.1\r\nHost: examp
 
 # Send completely custom request
 npx tsx caido-client.ts send-raw --host example.com --port 443 --tls --raw "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"
+npx tsx caido-client.ts send-raw --host example.com --raw @request.txt --name "G /"
+cat request.txt | npx tsx caido-client.ts send-raw --host example.com --raw -
+
+# Connect elsewhere while preserving the request Host/SNI you need
+npx tsx caido-client.ts replay <id> --connect-host 10.0.0.5 --connect-port 8443 --sni example.com
 ```
+
+`--raw` accepts a string with `\r\n` escapes, `@file` to read from disk, or `-` to read from stdin.
 
 ### export-curl - Convert to curl for PoCs
 
@@ -153,6 +170,21 @@ Outputs a ready-to-use curl command with all headers and body.
 
 ---
 
+## Replay Tab Lookup
+
+Use these when a Caido replay tab is already open and you want to work from its active entry directly.
+
+```bash
+npx tsx caido-client.ts get-session <session-id-or-name> --compact
+npx tsx caido-client.ts replay-entries <session-id-or-name> --limit 20
+npx tsx caido-client.ts replay-entries <session-id-or-name> --raw --compact
+npx tsx caido-client.ts edit-session <session-id-or-name> --body '{"test":true}' --compact
+```
+
+`session-entries` is accepted as an alias for `replay-entries`.
+
+---
+
 ## Replay Sessions & Collections
 
 ### Sessions
@@ -160,6 +192,7 @@ Outputs a ready-to-use curl command with all headers and body.
 ```bash
 # Create replay session from an existing request
 npx tsx caido-client.ts create-session <request-id>
+npx tsx caido-client.ts create-session <request-id> --collection <collection-id>
 
 # ALWAYS rename sessions for easy identification in Caido UI
 npx tsx caido-client.ts rename-session <session-id> "idor-user-profile"
@@ -167,6 +200,9 @@ npx tsx caido-client.ts rename-session <session-id> "idor-user-profile"
 # List all replay sessions
 npx tsx caido-client.ts replay-sessions
 npx tsx caido-client.ts replay-sessions --limit 50
+
+# Move sessions between collections
+npx tsx caido-client.ts move-session <session-id> <collection-id>
 
 # Delete replay sessions
 npx tsx caido-client.ts delete-sessions <session-id-1>,<session-id-2>
@@ -468,7 +504,7 @@ req.path.ncont:"/health" AND req.path.ncont:"/metrics"
 
 ## SDK Architecture
 
-This CLI is built on `@caido/sdk-client` v0.1.4+, using a clean multi-file architecture:
+This CLI is built on `@caido/sdk-client` v0.2.0+, using a clean multi-file architecture:
 
 ```
 caido-client.ts          # CLI entry point — arg parsing + command dispatch
@@ -479,7 +515,7 @@ lib/
   types.ts               # Shared types (OutputOpts)
   commands/
     requests.ts          # search, recent, get, get-response, export-curl
-    replay.ts            # replay, send-raw, edit, sessions, collections, automate, fuzz
+    replay.ts            # replay, send-raw, edit, replay-tab lookup, sessions, collections, automate, fuzz
     findings.ts          # findings, get-finding, create-finding, update-finding
     management.ts        # scopes, filters, environments, projects, hosted-files, tasks
     intercept.ts         # intercept-status, intercept-enable, intercept-disable
