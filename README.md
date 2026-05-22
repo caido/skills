@@ -2,6 +2,10 @@
 
 Collection of skills to interact with Caido.
 
+## Walkthrough
+
+Check our [documentation](https://docs.caido.io/app/tutorials/skills.html) for a complete walkthrough on how to setup the skill on your computer.
+
 ## Installation
 
 ```bash
