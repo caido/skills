@@ -19,7 +19,7 @@ Cookies and auth tokens are huge. Instead of copy-pasting 2KB of session cookies
 | **Replay Tab Lookup** | `get-session`, `replay-entries`, `session-entries` |
 | **Sessions** | `create-session`, `rename-session`, `move-session`, `replay-sessions`, `delete-sessions` |
 | **Collections** | `replay-collections`, `create-collection`, `rename-collection`, `delete-collection` |
-| **Fuzzing** | `create-automate-session`, `rename-automate-session`, `set-placeholder`, `set-payload`, `fuzz`, `automate-results`, `automate-sessions`, `automate-tasks`, `pause-task`, `resume-task`, `cancel-task-automate`, `duplicate-automate-session`, `delete-automate-session` |
+| **Fuzzing** | `create-automate-session`, `rename-automate-session`, `edit-automate-body`, `set-placeholder`, `set-payload`, `fuzz`, `automate-results`, `automate-sessions`, `automate-tasks`, `pause-task`, `resume-task`, `cancel-task-automate`, `duplicate-automate-session`, `delete-automate-session` |
 | **Scopes** | `scopes`, `create-scope`, `update-scope`, `delete-scope` |
 | **Filter Presets** | `filters`, `create-filter`, `update-filter`, `delete-filter` |
 | **Environments** | `envs`, `create-env`, `select-env`, `env-set`, `delete-env` |
@@ -211,13 +211,16 @@ Full CLI pipeline — no Caido UI needed:
 # Create session from a staged request
 npx tsx caido-client.ts create-automate-session <request-id>
 
-# Set placeholders — search for FUZZ, placeholder covers FUZZ
-npx tsx caido-client.ts set-placeholder <id> --search FUZZ
-npx tsx caido-client.ts set-payload <id> --list 'payload1,payload2'
+# Replace target values with FUZZ markers in the raw body
+npx tsx caido-client.ts edit-automate-body <session-id> --replace 'true:::"FUZZ"'
+
+# Set placeholders and payloads
+npx tsx caido-client.ts set-placeholder <session-id> --search FUZZ
+npx tsx caido-client.ts set-payload <session-id> --list 'payload1,payload2'
 
 # Run and get results
-npx tsx caido-client.ts fuzz <id>
-npx tsx caido-client.ts automate-results <id>
+npx tsx caido-client.ts fuzz <session-id>
+npx tsx caido-client.ts automate-results <session-id>
 ```
 
 ### Tasks, Projects, Info & Health

@@ -231,6 +231,8 @@ npx tsx caido-client.ts delete-collection <collection-id>
 
 Full-automation pipeline via the SDK. No Caido UI needed.
 
+First, prepare the raw body with FUZZ markers, then set placeholders:
+
 ```bash
 # 1. Create automate session from a staged request
 npx tsx caido-client.ts create-automate-session <request-id>
@@ -238,16 +240,20 @@ npx tsx caido-client.ts create-automate-session <request-id>
 # 2. Rename for identification
 npx tsx caido-client.ts rename-automate-session <session-id> "my-fuzz"
 
-# 3. Set injection points — search for FUZZ, placeholder covers FUZZ
+# 3. Edit the raw body — replace target values with FUZZ markers
+#    (Quotes are outside the marker, so payloads produce valid JSON)
+npx tsx caido-client.ts edit-automate-body <session-id> --replace 'true:::"FUZZ"'
+
+# 4. Set injection points — search for FUZZ, placeholder covers FUZZ
 npx tsx caido-client.ts set-placeholder <session-id> --search FUZZ
 
-# 4. Set payload list (comma-separated, no embedded quotes)
+# 5. Set payload list (comma-separated, no embedded quotes)
 npx tsx caido-client.ts set-payload <session-id> --list 'payload1,payload2'
 
-# 5. Start fuzzing
+# 6. Start fuzzing
 npx tsx caido-client.ts fuzz <session-id>
 
-# 6. Get results
+# 7. Get results
 npx tsx caido-client.ts automate-results <session-id>
 ```
 
@@ -643,7 +649,7 @@ npx tsx caido-client.ts edit <id> --set-header "X-Original-URL: /admin"
 npx tsx caido-client.ts edit <id> --remove-header "X-CSRF-Token"
 ```
 
-### 4. Fuzzing with Automate — Full 12-Step CLI Workflow
+### 4. Fuzzing with Automate — Full 11-Step CLI Workflow
 
 The Caido SDK supports full-automation fuzzing without touching the UI. The CLI provides the complete pipeline:
 
@@ -657,29 +663,32 @@ npx tsx caido-client.ts rename-automate-session <session-id> "log4j-login-fuzz"
 # 3. (Optional) Duplicate an existing session for variant fuzzing
 npx tsx caido-client.ts duplicate-automate-session <session-id>
 
-# 4. Set injection points — search for FUZZ, placeholder covers FUZZ
+# 4. Edit the raw body — replace target values with FUZZ markers
+npx tsx caido-client.ts edit-automate-body <session-id> --replace 'true:::"FUZZ"'
+
+# 5. Set injection points — search for FUZZ, placeholder covers FUZZ
 npx tsx caido-client.ts set-placeholder <session-id> --search FUZZ
 
-# 5. Set payloads (simple string list)
+# 6. Set payloads (simple string list)
 npx tsx caido-client.ts set-payload <session-id> --list 'payload1,payload2'
 
-# 6. Run the automation
+# 7. Run the automation
 npx tsx caido-client.ts fuzz <session-id>
 
-# 7. List all automate sessions
+# 8. List all automate sessions
 npx tsx caido-client.ts automate-sessions
 npx tsx caido-client.ts automate-sessions --limit 50
 
-# 8. Task lifecycle control
+# 9. Task lifecycle control
 npx tsx caido-client.ts automate-tasks               # list running/paused tasks
 npx tsx caido-client.ts pause-task <task-id>          # pause a running fuzz
 npx tsx caido-client.ts resume-task <task-id>         # resume a paused fuzz
 npx tsx caido-client.ts cancel-task-automate <id>     # cancel a running fuzz
 
-# 9. Get results
+# 10. Get results
 npx tsx caido-client.ts automate-results <session-id>
 
-# 10. Clean up
+# 11. Clean up
 npx tsx caido-client.ts delete-automate-session <session-id>
 npx tsx caido-client.ts delete-automate-entries <id-1>,<id-2>
 npx tsx caido-client.ts rename-automate-entry <entry-id> "popped"

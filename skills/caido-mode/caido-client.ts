@@ -11,7 +11,7 @@ import { parseOutputOpts, DEFAULT_OUTPUT_OPTS } from "./lib/types";
 import { cmdSearch, cmdRecent, cmdGet, cmdGetResponse, cmdExportCurl } from "./lib/commands/requests";
 import { cmdReplay, cmdSendRaw, cmdEdit, cmdGetSession, cmdReplayEntries, cmdEditSession, cmdReplaySessions, cmdCreateSession, cmdRenameSession, cmdMoveSession, cmdDeleteSessions, cmdReplayCollections, cmdCreateCollection, cmdRenameCollection, cmdDeleteCollection } from "./lib/commands/replay";
 import type { ConnectionOverrides } from "./lib/commands/replay";
-import { cmdCreateAutomateSession, cmdFuzz, cmdRenameAutomateSession, cmdSetPlaceholder, cmdSetPayload, cmdAutomateResults, cmdAutomateSessions, cmdAutomateTasks, cmdDeleteAutomateSession, cmdDuplicateAutomateSession, cmdPauseAutomateTask, cmdResumeAutomateTask, cmdCancelAutomateTask, cmdRenameAutomateEntry, cmdDeleteAutomateEntries } from "./lib/commands/automate";
+import { cmdCreateAutomateSession, cmdFuzz, cmdRenameAutomateSession, cmdSetPlaceholder, cmdSetPayload, cmdAutomateResults, cmdAutomateSessions, cmdAutomateTasks, cmdDeleteAutomateSession, cmdDuplicateAutomateSession, cmdPauseAutomateTask, cmdResumeAutomateTask, cmdCancelAutomateTask, cmdRenameAutomateEntry, cmdDeleteAutomateEntries, cmdEditAutomateBody } from "./lib/commands/automate";
 import { cmdFindings, cmdGetFinding, cmdCreateFinding, cmdUpdateFinding } from "./lib/commands/findings";
 import { cmdScopes, cmdCreateScope, cmdUpdateScope, cmdDeleteScope, cmdFilters, cmdCreateFilter, cmdUpdateFilter, cmdDeleteFilter, cmdEnvs, cmdCreateEnv, cmdSelectEnv, cmdEnvSet, cmdDeleteEnv, cmdProjects, cmdSelectProject, cmdHostedFiles, cmdDeleteHostedFile, cmdTasks, cmdCancelTask } from "./lib/commands/management";
 import { cmdInterceptStatus, cmdInterceptSet } from "./lib/commands/intercept";
@@ -173,6 +173,9 @@ Usage:
                                Rename an automate entry
   delete-automate-entries <ids>
                                Delete automate entries (comma-separated)
+  edit-automate-body <session-id>
+                               Find/replace in the raw request body
+    --replace <from>:::<to>    Replace text (repeatable)
 
 ═══════════════════════════════════════════════
  FINDINGS
@@ -653,6 +656,16 @@ async function main() {
     case "delete-automate-entries": {
       if (!args[1]) { console.error("Error: comma-separated entry IDs required"); process.exit(1); }
       await cmdDeleteAutomateEntries(args[1].split(",").map((s: string) => s.trim()));
+      break;
+    }
+
+    case "edit-automate-body": {
+      if (!args[1]) { console.error("Error: session-id required"); process.exit(1); }
+      const replacements: string[] = [];
+      for (let i = 2; i < args.length; i++) {
+        if (args[i] === "--replace" && args[i + 1]) { replacements.push(args[i + 1]); i++; }
+      }
+      await cmdEditAutomateBody(args[1], replacements);
       break;
     }
 

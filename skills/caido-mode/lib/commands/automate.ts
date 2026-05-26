@@ -144,10 +144,13 @@ export async function cmdSetPlaceholder(
   const existingSettings = session.settings as any;
   let existingPayloads: any[] = [];
   if (existingSettings?.payloads?.length > 0) {
-    existingPayloads = existingSettings.payloads.map((p: any) => ({
-      options: p.options,
-      preprocessors: [],
-    }));
+    existingPayloads = existingSettings.payloads.map((p: any) => {
+      const opts: any = {};
+      if (p.options?.list) opts.simpleList = { list: p.options.list };
+      else if (p.options?.range) opts.number = { range: p.options.range, increments: p.options.increments, minLength: p.options.minLength };
+      else opts.simpleList = { list: [] };
+      return { options: opts, preprocessors: [] };
+    });
   }
 
   const input: any = {
@@ -387,4 +390,92 @@ export async function cmdDeleteAutomateEntries(ids: string[]) {
   const client = await getClient();
   const result = await client.graphql.mutation(DELETE_AUTOMATE_ENTRIES, { ids });
   console.log(JSON.stringify((result as any).deleteAutomateEntries, null, 2));
+}
+
+// ── Edit automate session body ──
+// Find/replace in the raw request body, update Content-Length
+
+export async function cmdEditAutomateBody(sessionId: string, replacements: string[]) {
+  if (replacements.length === 0) {
+    console.error("Error: --replace <from>:::<to> is required");
+    process.exit(1);
+  }
+
+  const client = await getClient();
+
+  const getResult = await client.graphql.query(GET_AUTOMATE_SESSION, { id: sessionId });
+  const session = (getResult as any).automateSession;
+  if (!session) {
+    console.error(`Automate session ${sessionId} not found`);
+    process.exit(1);
+  }
+
+  let raw = Buffer.from(session.raw, "base64").toString("utf-8");
+  const oldRaw = raw;
+
+  for (const rep of replacements) {
+    const [from, to] = rep.split(":::");
+    if (from !== undefined && to !== undefined) {
+      raw = raw.replaceAll(from, to);
+    }
+  }
+
+  if (raw === oldRaw) {
+    console.log(JSON.stringify({ sessionId, note: "No changes made — search strings not found", modified: false }, null, 2));
+    return;
+  }
+
+  // Recompute Content-Length if body changed
+  const lineEnd = "\r\n";
+  const separator = lineEnd + lineEnd;
+  const parts = raw.split(separator);
+  if (parts.length >= 2) {
+    const headerBlock = parts[0];
+    const bodyPart = parts.slice(1).join(separator);
+    const headerLines = headerBlock.split(lineEnd);
+    const clBytes = new TextEncoder().encode(bodyPart).length;
+    const newHeaders = headerLines.filter(h => !h.toLowerCase().startsWith("content-length:"));
+    newHeaders.push(`Content-Length: ${clBytes}`);
+    raw = newHeaders.join(lineEnd) + separator + bodyPart;
+  }
+
+  const newBase64 = Buffer.from(raw, "utf-8").toString("base64");
+
+  // Preserve existing settings
+  const existingSettings = (session.settings || {}) as any;
+  const settingsPayload: any = {
+    redirect: existingSettings.redirect || { strategy: "ALWAYS", max: 5 },
+    strategy: existingSettings.strategy || "ALL",
+    concurrency: existingSettings.concurrency || { workers: 1, delay: 0 },
+    retryOnFailure: existingSettings.retryOnFailure || { maximumRetries: 0, backoff: 0 },
+    closeConnection: existingSettings.closeConnection ?? false,
+    updateContentLength: true,
+  };
+
+  // Preserve payloads and placeholders if they exist
+  if (existingSettings.payloads?.length > 0) {
+    settingsPayload.payloads = existingSettings.payloads;
+  } else {
+    settingsPayload.payloads = [{ options: { simpleList: { list: [""] } }, preprocessors: [] }];
+  }
+  if (existingSettings.placeholders?.length > 0) {
+    settingsPayload.placeholders = existingSettings.placeholders;
+  } else {
+    settingsPayload.placeholders = [];
+  }
+
+  await client.graphql.mutation(UPDATE_AUTOMATE_SESSION, {
+    id: sessionId,
+    input: {
+      connection: session.connection,
+      raw: newBase64,
+      settings: settingsPayload,
+    },
+  });
+
+  console.log(JSON.stringify({
+    sessionId,
+    note: `Applied ${replacements.length} replacements, body modified`,
+    modified: true,
+  }, null, 2));
 }
