@@ -238,10 +238,8 @@ npx tsx caido-client.ts create-automate-session <request-id>
 # 2. Rename for identification
 npx tsx caido-client.ts rename-automate-session <session-id> "my-fuzz"
 
-# 3. Set injection points (byte-offset placeholders in raw request)
-#    For a body with "FUZZ" markers, search for the string before the
-#    value and use --length to cover the 4 FUZZ bytes:
-npx tsx caido-client.ts set-placeholder <session-id> --search ':"' --length 4
+# 3. Set injection points — search for FUZZ, placeholder covers FUZZ
+npx tsx caido-client.ts set-placeholder <session-id> --search FUZZ
 
 # 4. Set payload list (comma-separated, no embedded quotes)
 npx tsx caido-client.ts set-payload <session-id> --list 'payload1,payload2'
@@ -253,9 +251,9 @@ npx tsx caido-client.ts fuzz <session-id>
 npx tsx caido-client.ts automate-results <session-id>
 ```
 
-**--search matches only the first occurrence**. For multiple placeholders,
+**`--search` matches only the first occurrence**. For multiple placeholders,
 run `set-placeholder` once per field with a unique search string, or use
-`--start --end` with computed byte offsets:
+`--start --end` with computed byte offsets.
 
 **CRITICAL — Placeholder byte ranges must preserve JSON structure**:
 Caido replaces the exact byte range with the payload. If the range includes
@@ -659,9 +657,8 @@ npx tsx caido-client.ts rename-automate-session <session-id> "log4j-login-fuzz"
 # 3. (Optional) Duplicate an existing session for variant fuzzing
 npx tsx caido-client.ts duplicate-automate-session <session-id>
 
-# 4. Set injection points on FUZZ markers in the raw body
-#    First replace fuzz targets with "FUZZ", then:
-npx tsx caido-client.ts set-placeholder <session-id> --search ':"' --length 4
+# 4. Set injection points — search for FUZZ, placeholder covers FUZZ
+npx tsx caido-client.ts set-placeholder <session-id> --search FUZZ
 
 # 5. Set payloads (simple string list)
 npx tsx caido-client.ts set-payload <session-id> --list 'payload1,payload2'

@@ -211,8 +211,8 @@ Full CLI pipeline — no Caido UI needed:
 # Create session from a staged request
 npx tsx caido-client.ts create-automate-session <request-id>
 
-# Set placeholders and payloads via CLI
-npx tsx caido-client.ts set-placeholder <id> --search ':"' --length 4
+# Set placeholders — search for FUZZ, placeholder covers FUZZ
+npx tsx caido-client.ts set-placeholder <id> --search FUZZ
 npx tsx caido-client.ts set-payload <id> --list 'payload1,payload2'
 
 # Run and get results

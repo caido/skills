@@ -98,15 +98,26 @@ export async function cmdSetPlaceholder(
 
   const raw = Buffer.from(session.raw, "base64").toString("utf-8");
 
-  // Auto-compute placeholder from --search + --length
-  if (searchStr && searchLength !== undefined && placeholders.length === 0) {
+  // Auto-compute placeholder from --search
+  // Two modes:
+  //   --search <str>          : placeholder covers the found string
+  //   --search <str> --len <n>: placeholder covers n bytes after the string
+  if (searchStr && placeholders.length === 0) {
     const idx = raw.indexOf(searchStr);
     if (idx === -1) {
       console.error(`Search string not found in raw request: "${searchStr}"`);
       showRaw = true;
     } else {
-      const start = idx + searchStr.length;
-      const end = start + searchLength;
+      let start: number, end: number;
+      if (searchLength !== undefined) {
+        // Legacy mode: cover N bytes after the search string
+        start = idx + searchStr.length;
+        end = start + searchLength;
+      } else {
+        // Default mode: cover the search string itself
+        start = idx;
+        end = idx + searchStr.length;
+      }
       placeholders.push({ start, end });
       console.log(JSON.stringify({
         note: `Found "${searchStr}" at byte ${idx}, setting placeholder at [${start}-${end}]`,

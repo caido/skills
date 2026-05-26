@@ -156,8 +156,8 @@ Usage:
                                Clone an existing automate session
   set-placeholder <session-id>  Set injection points (placeholders)
     --start <n> --end <n>      Byte offsets in the raw request
-    --search <string>          Auto-locate string and show raw (dry-run)
-    --length <n>               Bytes to replace after search string
+    --search <string>          Search for string, placeholder covers the string
+    --length <n>               Legacy: bytes to cover after the search string
     --show-raw                 Display raw request content
   set-payload <session-id>     Set payload list
     --list "a,b,c"             Comma-separated payload values
@@ -568,7 +568,7 @@ async function main() {
       }
 
       if (explicitPlaceholders.length === 0 && !searchStr && !showRaw) {
-        console.error("Error: provide --start <n> --end <n> or --search <string> [--length <n>]");
+        console.error("Error: provide --start <n> --end <n> or --search <string>");
         process.exit(1);
       }
 
