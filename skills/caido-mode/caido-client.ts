@@ -9,8 +9,9 @@ import { parseOutputOpts, DEFAULT_OUTPUT_OPTS } from "./lib/types";
 
 // Commands
 import { cmdSearch, cmdRecent, cmdGet, cmdGetResponse, cmdExportCurl } from "./lib/commands/requests";
-import { cmdReplay, cmdSendRaw, cmdEdit, cmdGetSession, cmdReplayEntries, cmdEditSession, cmdReplaySessions, cmdCreateSession, cmdRenameSession, cmdMoveSession, cmdDeleteSessions, cmdReplayCollections, cmdCreateCollection, cmdRenameCollection, cmdDeleteCollection, cmdCreateAutomateSession, cmdFuzz } from "./lib/commands/replay";
+import { cmdReplay, cmdSendRaw, cmdEdit, cmdGetSession, cmdReplayEntries, cmdEditSession, cmdReplaySessions, cmdCreateSession, cmdRenameSession, cmdMoveSession, cmdDeleteSessions, cmdReplayCollections, cmdCreateCollection, cmdRenameCollection, cmdDeleteCollection } from "./lib/commands/replay";
 import type { ConnectionOverrides } from "./lib/commands/replay";
+import { cmdCreateAutomateSession, cmdFuzz, cmdRenameAutomateSession, cmdSetPlaceholder, cmdSetPayload, cmdAutomateResults, cmdAutomateSessions, cmdAutomateTasks, cmdDeleteAutomateSession, cmdDuplicateAutomateSession, cmdPauseAutomateTask, cmdResumeAutomateTask, cmdCancelAutomateTask, cmdRenameAutomateEntry, cmdDeleteAutomateEntries } from "./lib/commands/automate";
 import { cmdFindings, cmdGetFinding, cmdCreateFinding, cmdUpdateFinding } from "./lib/commands/findings";
 import { cmdScopes, cmdCreateScope, cmdUpdateScope, cmdDeleteScope, cmdFilters, cmdCreateFilter, cmdUpdateFilter, cmdDeleteFilter, cmdEnvs, cmdCreateEnv, cmdSelectEnv, cmdEnvSet, cmdDeleteEnv, cmdProjects, cmdSelectProject, cmdHostedFiles, cmdDeleteHostedFile, cmdTasks, cmdCancelTask } from "./lib/commands/management";
 import { cmdInterceptStatus, cmdInterceptSet } from "./lib/commands/intercept";
@@ -146,7 +147,32 @@ Usage:
 ═══════════════════════════════════════════════
 
   create-automate-session <id> Create an automate session for fuzzing
-  fuzz <session-id>            Start fuzzing (configure payloads in Caido UI)
+  automate-sessions            List all automate sessions
+    --limit <n>                Max results (default: 20)
+  rename-automate-session <id> <name>
+                               Rename an automate session
+  delete-automate-session <id> Delete an automate session
+  duplicate-automate-session <id>
+                               Clone an existing automate session
+  set-placeholder <session-id>  Set injection points (placeholders)
+    --start <n> --end <n>      Byte offsets in the raw request
+    --search <string>          Auto-locate string and show raw (dry-run)
+    --length <n>               Bytes to replace after search string
+    --show-raw                 Display raw request content
+  set-payload <session-id>     Set payload list
+    --list "a,b,c"             Comma-separated payload values
+  fuzz <session-id>            Start fuzzing (must have placeholders + payloads)
+  automate-results <session-id>
+                               Get all fuzzing results (request/response pairs)
+  automate-tasks               List automate tasks
+    --limit <n>                Max results (default: 20)
+  pause-task <id>              Pause a running automate task
+  resume-task <id>             Resume a paused automate task
+  cancel-task-automate <id>    Cancel a running automate task
+  rename-automate-entry <id> <name>
+                               Rename an automate entry
+  delete-automate-entries <ids>
+                               Delete automate entries (comma-separated)
 
 ═══════════════════════════════════════════════
  FINDINGS
@@ -508,7 +534,125 @@ async function main() {
 
     case "fuzz": {
       if (!args[1]) { console.error("Error: session-id required"); process.exit(1); }
-      await cmdFuzz(args[1], []);
+      await cmdFuzz(args[1]);
+      break;
+    }
+
+    case "rename-automate-session": {
+      if (!args[1] || !args[2]) { console.error("Error: session-id and name required"); process.exit(1); }
+      await cmdRenameAutomateSession(args[1], args[2]);
+      break;
+    }
+
+    case "set-placeholder": {
+      if (!args[1]) { console.error("Error: session-id required"); process.exit(1); }
+
+      const explicitPlaceholders: { start: number; end: number }[] = [];
+      let searchStr: string | undefined;
+      let searchLength: number | undefined;
+      let showRaw = false;
+
+      for (let i = 2; i < args.length; i++) {
+        if (args[i] === "--start" && args[i + 1] && args[i + 2] === "--end" && args[i + 3]) {
+          explicitPlaceholders.push({ start: parseInt(args[i + 1], 10), end: parseInt(args[i + 3], 10) });
+          i += 3;
+        } else if (args[i] === "--search" && args[i + 1]) {
+          searchStr = args[i + 1];
+          i++;
+        } else if (args[i] === "--length" && args[i + 1]) {
+          searchLength = parseInt(args[i + 1], 10);
+          i++;
+        } else if (args[i] === "--show-raw") {
+          showRaw = true;
+        }
+      }
+
+      if (explicitPlaceholders.length === 0 && !searchStr && !showRaw) {
+        console.error("Error: provide --start <n> --end <n> or --search <string> [--length <n>]");
+        process.exit(1);
+      }
+
+      await cmdSetPlaceholder(args[1], explicitPlaceholders, showRaw, searchStr, searchLength);
+      break;
+    }
+
+    case "set-payload": {
+      if (!args[1]) { console.error("Error: session-id required"); process.exit(1); }
+      let list: string[] = [];
+      for (let i = 2; i < args.length; i++) {
+        if (args[i] === "--list" && args[i + 1]) {
+          list = args[i + 1].split(",").map(s => s.trim());
+          i++;
+        }
+      }
+      if (list.length === 0) { console.error("Error: --list required (comma-separated)"); process.exit(1); }
+      await cmdSetPayload(args[1], list);
+      break;
+    }
+
+    case "automate-results": {
+      if (!args[1]) { console.error("Error: session-id required"); process.exit(1); }
+      await cmdAutomateResults(args[1]);
+      break;
+    }
+
+    case "automate-sessions": {
+      let limit = 20;
+      for (let i = 1; i < args.length; i++) {
+        if (args[i] === "--limit" && args[i + 1]) { limit = parseInt(args[i + 1], 10); i++; }
+      }
+      await cmdAutomateSessions(limit);
+      break;
+    }
+
+    case "automate-tasks": {
+      let limit = 20;
+      for (let i = 1; i < args.length; i++) {
+        if (args[i] === "--limit" && args[i + 1]) { limit = parseInt(args[i + 1], 10); i++; }
+      }
+      await cmdAutomateTasks(limit);
+      break;
+    }
+
+    case "delete-automate-session": {
+      if (!args[1]) { console.error("Error: session-id required"); process.exit(1); }
+      await cmdDeleteAutomateSession(args[1]);
+      break;
+    }
+
+    case "duplicate-automate-session": {
+      if (!args[1]) { console.error("Error: session-id required"); process.exit(1); }
+      await cmdDuplicateAutomateSession(args[1]);
+      break;
+    }
+
+    case "pause-task": {
+      if (!args[1]) { console.error("Error: task-id required"); process.exit(1); }
+      await cmdPauseAutomateTask(args[1]);
+      break;
+    }
+
+    case "resume-task": {
+      if (!args[1]) { console.error("Error: task-id required"); process.exit(1); }
+      await cmdResumeAutomateTask(args[1]);
+      break;
+    }
+
+    case "cancel-task-automate": {
+      if (!args[1]) { console.error("Error: task-id required"); process.exit(1); }
+      await cmdCancelAutomateTask(args[1]);
+      break;
+    }
+
+    case "rename-automate-entry": {
+      if (!args[1] || !args[2]) { console.error("Error: entry-id and name required"); process.exit(1); }
+      await cmdRenameAutomateEntry(args[1], args[2]);
+      break;
+    }
+
+    case "delete-automate-entries": {
+      if (!args[1]) { console.error("Error: comma-separated entry IDs required"); process.exit(1); }
+      await cmdDeleteAutomateEntries(args[1].split(",").map((s: string) => s.trim()));
       break;
     }
 

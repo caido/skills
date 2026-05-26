@@ -19,7 +19,7 @@ Cookies and auth tokens are huge. Instead of copy-pasting 2KB of session cookies
 | **Replay Tab Lookup** | `get-session`, `replay-entries`, `session-entries` |
 | **Sessions** | `create-session`, `rename-session`, `move-session`, `replay-sessions`, `delete-sessions` |
 | **Collections** | `replay-collections`, `create-collection`, `rename-collection`, `delete-collection` |
-| **Fuzzing** | `create-automate-session`, `fuzz` |
+| **Fuzzing** | `create-automate-session`, `rename-automate-session`, `set-placeholder`, `set-payload`, `fuzz`, `automate-results`, `automate-sessions`, `automate-tasks`, `pause-task`, `resume-task`, `cancel-task-automate`, `duplicate-automate-session`, `delete-automate-session` |
 | **Scopes** | `scopes`, `create-scope`, `update-scope`, `delete-scope` |
 | **Filter Presets** | `filters`, `create-filter`, `update-filter`, `delete-filter` |
 | **Environments** | `envs`, `create-env`, `select-env`, `env-set`, `delete-env` |
@@ -205,10 +205,19 @@ npx tsx caido-client.ts delete-collection <id>
 
 ### Fuzzing
 
+Full CLI pipeline — no Caido UI needed:
+
 ```bash
+# Create session from a staged request
 npx tsx caido-client.ts create-automate-session <request-id>
-# Configure payload markers and wordlists in Caido UI first
-npx tsx caido-client.ts fuzz <session-id>
+
+# Set placeholders and payloads via CLI
+npx tsx caido-client.ts set-placeholder <id> --search ':"' --length 4
+npx tsx caido-client.ts set-payload <id> --list 'payload1,payload2'
+
+# Run and get results
+npx tsx caido-client.ts fuzz <id>
+npx tsx caido-client.ts automate-results <id>
 ```
 
 ### Tasks, Projects, Info & Health

@@ -229,13 +229,54 @@ npx tsx caido-client.ts delete-collection <collection-id>
 
 ### Fuzzing
 
+Full-automation pipeline via the SDK. No Caido UI needed.
+
 ```bash
-# Create automate session for fuzzing
+# 1. Create automate session from a staged request
 npx tsx caido-client.ts create-automate-session <request-id>
 
-# Start fuzzing (configure payloads and markers in Caido UI first)
+# 2. Rename for identification
+npx tsx caido-client.ts rename-automate-session <session-id> "my-fuzz"
+
+# 3. Set injection points (byte-offset placeholders in raw request)
+#    For a body with "FUZZ" markers, search for the string before the
+#    value and use --length to cover the 4 FUZZ bytes:
+npx tsx caido-client.ts set-placeholder <session-id> --search ':"' --length 4
+
+# 4. Set payload list (comma-separated, no embedded quotes)
+npx tsx caido-client.ts set-payload <session-id> --list 'payload1,payload2'
+
+# 5. Start fuzzing
 npx tsx caido-client.ts fuzz <session-id>
+
+# 6. Get results
+npx tsx caido-client.ts automate-results <session-id>
 ```
+
+**--search matches only the first occurrence**. For multiple placeholders,
+run `set-placeholder` once per field with a unique search string, or use
+`--start --end` with computed byte offsets:
+
+**CRITICAL — Placeholder byte ranges must preserve JSON structure**:
+Caido replaces the exact byte range with the payload. If the range includes
+surrounding quote characters, the quotes are replaced too — producing
+malformed JSON.
+
+**WRONG**: body `"remember":true` → placeholder covers `true` (no quotes)
+→ payload `${jndi:...}` produces `"remember":${jndi:...}` (invalid JSON)
+
+**RIGHT**: body `"remember":"FUZZ"` → placeholder covers just `FUZZ`
+→ payload `${jndi:...}` produces `"remember":"${jndi:...}"` (valid JSON)
+
+**The FUZZ marker pattern**:
+1. In the raw body, replace each fuzz target with `"FUZZ"` (4 bytes)
+2. Quotes go at bytes *before* and *after* `FUZZ` — outside the placeholder range
+3. Set placeholder to cover exactly the 4 `FUZZ` bytes
+4. This keeps JSON valid for any payload and eliminates quote-matching errors
+
+For JSON APIs: convert boolean fields to quoted strings before fuzzing.
+Change `"remember":true` to `"remember":"FUZZ"` so string payloads
+produce valid JSON.
 
 ---
 
@@ -550,8 +591,16 @@ Features not yet in the high-level SDK use `client.graphql.query()`/`client.grap
 | `PAUSE_INTERCEPT` / `RESUME_INTERCEPT` | intercept-enable, intercept-disable |
 | `PLUGIN_PACKAGES_QUERY` | plugins |
 | `CREATE_AUTOMATE_SESSION` | create-automate-session |
-| `GET_AUTOMATE_SESSION` | fuzz (verify session) |
+| `GET_AUTOMATE_SESSION` | fuzz (verify session), set-placeholder, set-payload |
 | `START_AUTOMATE_TASK` | fuzz (start task) |
+| `UPDATE_AUTOMATE_SESSION` | set-placeholder, set-payload |
+| `RENAME_AUTOMATE_SESSION` | rename-automate-session |
+| `AUTOMATE_SESSION_RESULTS` | automate-results |
+| `AUTOMATE_SESSIONS` / `AUTOMATE_TASKS` | automate-sessions, automate-tasks |
+| `DELETE_AUTOMATE_SESSION` / `DUPLICATE_AUTOMATE_SESSION` | delete, duplicate-automate-session |
+| `PAUSE_AUTOMATE_TASK` / `RESUME_AUTOMATE_TASK` | pause-task, resume-task |
+| `CANCEL_AUTOMATE_TASK` | cancel-task-automate |
+| `RENAME_AUTOMATE_ENTRY` / `DELETE_AUTOMATE_ENTRIES` | rename-automate-entry, delete-automate-entries |
 
 ---
 
@@ -596,12 +645,47 @@ npx tsx caido-client.ts edit <id> --set-header "X-Original-URL: /admin"
 npx tsx caido-client.ts edit <id> --remove-header "X-CSRF-Token"
 ```
 
-### 4. Fuzzing with Automate
+### 4. Fuzzing with Automate — Full 12-Step CLI Workflow
+
+The Caido SDK supports full-automation fuzzing without touching the UI. The CLI provides the complete pipeline:
 
 ```bash
+# 1. Create automate session from a staged request
 npx tsx caido-client.ts create-automate-session <request-id>
-# Configure payload markers and wordlists in Caido UI
+
+# 2. Rename it to something meaningful
+npx tsx caido-client.ts rename-automate-session <session-id> "log4j-login-fuzz"
+
+# 3. (Optional) Duplicate an existing session for variant fuzzing
+npx tsx caido-client.ts duplicate-automate-session <session-id>
+
+# 4. Set injection points on FUZZ markers in the raw body
+#    First replace fuzz targets with "FUZZ", then:
+npx tsx caido-client.ts set-placeholder <session-id> --search ':"' --length 4
+
+# 5. Set payloads (simple string list)
+npx tsx caido-client.ts set-payload <session-id> --list 'payload1,payload2'
+
+# 6. Run the automation
 npx tsx caido-client.ts fuzz <session-id>
+
+# 7. List all automate sessions
+npx tsx caido-client.ts automate-sessions
+npx tsx caido-client.ts automate-sessions --limit 50
+
+# 8. Task lifecycle control
+npx tsx caido-client.ts automate-tasks               # list running/paused tasks
+npx tsx caido-client.ts pause-task <task-id>          # pause a running fuzz
+npx tsx caido-client.ts resume-task <task-id>         # resume a paused fuzz
+npx tsx caido-client.ts cancel-task-automate <id>     # cancel a running fuzz
+
+# 9. Get results
+npx tsx caido-client.ts automate-results <session-id>
+
+# 10. Clean up
+npx tsx caido-client.ts delete-automate-session <session-id>
+npx tsx caido-client.ts delete-automate-entries <id-1>,<id-2>
+npx tsx caido-client.ts rename-automate-entry <entry-id> "popped"
 ```
 
 ### 5. Filter + Analyze Pattern
@@ -631,6 +715,8 @@ npx tsx caido-client.ts search 'preset:"API 4xx"' --limit 20
 9. **Use environments** to store test data (victim IDs, tokens, etc.)
 10. **Output is JSON** - parse response fields as needed
 11. **NEVER use `NOT` in HTTPQL** - it doesn't exist. Use negated operators: `ne`, `ncont`, `nlike`, `nregex`
+12. **Placeholder ranges must NOT include surrounding quotes** — Caido replaces the exact byte range with the payload. If `--start`/`--end` includes quote characters, the quotes are replaced and the result is malformed JSON. Use `FUZZ` as a same-length marker with quotes outside the range.
+13. **Payloads must NOT carry their own quotes when body provides them** — If the body has `"username":"FUZZ"`, the payload should be `${jndi:...}`, not `"${jndi:...}"`. The payload replaces `FUZZ` inside the existing quotes.
 
 ## Performance & Context Optimization
 

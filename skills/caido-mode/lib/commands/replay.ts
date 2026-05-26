@@ -1,11 +1,8 @@
-/** Replay, Edit, Sessions, Collections, Automate/Fuzz commands */
+/** Replay, Edit, Sessions, Collections commands */
 
 import { getClient } from "../client";
 import { decodeRaw, formatHttpRaw } from "../output";
 import {
-  CREATE_AUTOMATE_SESSION,
-  GET_AUTOMATE_SESSION,
-  START_AUTOMATE_TASK,
   CREATE_REPLAY_SESSION_RAW,
 } from "../graphql";
 import type { OutputOpts } from "../types";
@@ -512,39 +509,4 @@ export async function cmdDeleteCollection(collectionId: string) {
   const client = await getClient();
   await client.replay.collections.delete(collectionId);
   console.log(JSON.stringify({ deleted: collectionId }, null, 2));
-}
-
-// -- Automate / Fuzz --
-
-export async function cmdCreateAutomateSession(requestId: string) {
-  const client = await getClient();
-  const result = await client.graphql.mutation(CREATE_AUTOMATE_SESSION, {
-    input: { requestSource: { id: requestId } },
-  });
-  console.log(JSON.stringify((result as any).createAutomateSession.session, null, 2));
-}
-
-export async function cmdFuzz(sessionId: string, payloads: string[]) {
-  const client = await getClient();
-
-  const check = await client.graphql.query(GET_AUTOMATE_SESSION, { id: sessionId });
-  const session = (check as any).automateSession;
-  if (!session) {
-    console.error(`Automate session ${sessionId} not found`);
-    process.exit(1);
-  }
-
-  console.log(JSON.stringify({
-    note: "Starting automate task with existing session settings. Configure payloads in Caido UI.",
-    sessionId,
-  }, null, 2));
-
-  const startResult = await client.graphql.mutation(START_AUTOMATE_TASK, { automateSessionId: sessionId });
-  const task = (startResult as any).startAutomateTask.automateTask;
-
-  console.log(JSON.stringify({
-    sessionId,
-    taskId: task.id,
-    status: "started",
-  }, null, 2));
 }

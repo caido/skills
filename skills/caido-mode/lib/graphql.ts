@@ -68,6 +68,7 @@ export const GET_AUTOMATE_SESSION = gql`
       raw
       settings {
         payloads { options { ... on AutomateSimpleListPayload { list } } }
+        placeholders { start end }
       }
     }
   }
@@ -77,6 +78,152 @@ export const START_AUTOMATE_TASK = gql`
   mutation($automateSessionId: ID!) {
     startAutomateTask(automateSessionId: $automateSessionId) {
       automateTask { id paused }
+    }
+  }
+`;
+
+export const RENAME_AUTOMATE_SESSION = gql`
+  mutation($id: ID!, $name: String!) {
+    renameAutomateSession(id: $id, name: $name) {
+      session { id name }
+    }
+  }
+`;
+
+export const UPDATE_AUTOMATE_SESSION = gql`
+  mutation($id: ID!, $input: UpdateAutomateSessionInput!) {
+    updateAutomateSession(id: $id, input: $input) {
+      session { id name }
+    }
+  }
+`;
+
+export const AUTOMATE_SESSION_RESULTS = gql`
+  query($id: ID!) {
+    automateSession(id: $id) {
+      id
+      name
+      entries {
+        id
+        name
+        raw
+        requests(first: 100) {
+          edges {
+            node {
+              sequenceId
+              error
+              payloads { raw position }
+              request {
+                id
+                method
+                host
+                path
+                port
+                isTls
+                raw
+                response {
+                  statusCode
+                  raw
+                  roundtripTime
+                  length
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+// ── Automate: list, delete, duplicate, control ──
+
+export const AUTOMATE_SESSIONS = gql`
+  query($first: Int, $after: String) {
+    automateSessions(first: $first, after: $after) {
+      edges {
+        node {
+          id
+          name
+          createdAt
+          settings { payloads { options { ... on AutomateSimpleListPayload { list } } } }
+        }
+        cursor
+      }
+      count { value }
+    }
+  }
+`;
+
+export const AUTOMATE_TASKS = gql`
+  query($first: Int, $after: String) {
+    automateTasks(first: $first, after: $after) {
+      edges {
+        node {
+          id
+          paused
+          entry { id name }
+        }
+        cursor
+      }
+      count { value }
+    }
+  }
+`;
+
+export const DELETE_AUTOMATE_SESSION = gql`
+  mutation($id: ID!) {
+    deleteAutomateSession(id: $id) {
+      deletedId
+    }
+  }
+`;
+
+export const DUPLICATE_AUTOMATE_SESSION = gql`
+  mutation($id: ID!) {
+    duplicateAutomateSession(id: $id) {
+      session { id name createdAt }
+    }
+  }
+`;
+
+export const PAUSE_AUTOMATE_TASK = gql`
+  mutation($id: ID!) {
+    pauseAutomateTask(id: $id) {
+      automateTask { id paused }
+    }
+  }
+`;
+
+export const RESUME_AUTOMATE_TASK = gql`
+  mutation($id: ID!) {
+    resumeAutomateTask(id: $id) {
+      automateTask { id paused }
+    }
+  }
+`;
+
+export const CANCEL_AUTOMATE_TASK = gql`
+  mutation($id: ID!) {
+    cancelAutomateTask(id: $id) {
+      cancelledId
+    }
+  }
+`;
+
+export const RENAME_AUTOMATE_ENTRY = gql`
+  mutation($entryId: ID!, $name: String!) {
+    renameAutomateEntry(id: $entryId, name: $name) {
+      entry { id name }
+    }
+  }
+`;
+
+export const DELETE_AUTOMATE_ENTRIES = gql`
+  mutation($ids: [ID!]!) {
+    deleteAutomateEntries(ids: $ids) {
+      deletedIds
+      errors { ... on UnknownIdUserError { id code } }
     }
   }
 `;
