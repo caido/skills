@@ -37,6 +37,44 @@ function buildConnection(host: string, port: number, isTLS: boolean, overrides?:
   return connection;
 }
 
+// ── Session Naming Helpers ──
+
+function deriveSessionName(raw: string, userOpt?: string, suffix?: string): string {
+  if (userOpt) {
+    return userOpt.trim().substring(0, 80).replace(/\r?\n/g, " ").replace(/\s+/g, " ");
+  }
+  
+  // Extract Request Line: "GET /foo HTTP/1.1"
+  const lineEnd = raw.indexOf("\r\n") >= 0 ? "\r\n" : "\n";
+  const requestLine = raw.split(lineEnd)[0];
+  if (!requestLine) return "Session";
+  
+  const parts = requestLine.split(" ");
+  if (parts.length >= 2) {
+    const method = parts[0];
+    const path = parts[1];
+    let name = `${method} ${path}`.replace(/\r?\n/g, " ").replace(/\s+/g, " ");
+    if (suffix) {
+      name = `${name} ${suffix}`;
+    }
+    return name.substring(0, 80);
+  }
+  return "Session";
+}
+
+async function nameSession(client: any, sessionId: string, name: string): Promise<boolean> {
+  if (!name || name === "Session") return false;
+  try {
+    await client.replay.sessions.rename(sessionId, name);
+    return true;
+  } catch (err: any) {
+    if (err.message && !err.message.toLowerCase().includes("empty")) {
+      console.error(`Failed to rename session: ${err.message}`);
+    }
+    return false;
+  }
+}
+
 async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];
   for await (const chunk of process.stdin) {
@@ -202,6 +240,7 @@ export async function cmdReplay(
   opts: OutputOpts,
   overrides?: ConnectionOverrides,
   collectionId?: string,
+  sessionName?: string,
 ) {
   const client = await getClient();
   const original = await client.request.get(requestId, { raw: true });
@@ -228,7 +267,15 @@ export async function cmdReplay(
   );
 
   const result = await client.replay.send(session.id, { raw, connection });
-  console.log(JSON.stringify(buildReplayOutput(session.id, result, opts), null, 2));
+  const finalName = deriveSessionName(raw, sessionName);
+  const named = await nameSession(client, session.id, finalName);
+  
+  const output = buildReplayOutput(session.id, result, opts);
+  if (named) {
+    output.sessionName = finalName;
+    output.named = true;
+  }
+  console.log(JSON.stringify(output, null, 2));
 }
 
 export async function cmdSendRaw(
@@ -247,10 +294,16 @@ export async function cmdSendRaw(
   const connection = buildConnection(host, port, tls, overrides);
   const session = await createRawReplaySession(client, raw, connection, collectionId);
 
-  if (sessionName) await client.replay.sessions.rename(session.id, sessionName);
+  const finalName = deriveSessionName(raw, sessionName);
+  const named = await nameSession(client, session.id, finalName);
 
   const result = await client.replay.send(session.id, { raw, connection });
-  console.log(JSON.stringify(buildReplayOutput(session.id, result, opts), null, 2));
+  const output = buildReplayOutput(session.id, result, opts);
+  if (named) {
+    output.sessionName = finalName;
+    output.named = true;
+  }
+  console.log(JSON.stringify(output, null, 2));
 }
 
 // -- Edit --
@@ -261,6 +314,7 @@ export async function cmdEdit(
   opts: OutputOpts,
   overrides?: ConnectionOverrides,
   collectionId?: string,
+  sessionName?: string,
 ) {
   const client = await getClient();
   const original = await client.request.get(requestId, { raw: true });
@@ -291,7 +345,18 @@ export async function cmdEdit(
   );
 
   const result = await client.replay.send(session.id, { raw: modifiedRaw, connection });
-  console.log(JSON.stringify(buildReplayOutput(session.id, result, opts, modifiedRaw), null, 2));
+  
+  const isAutoEdit = (edits.path || edits.method || edits.replacements.length > 0) && !sessionName;
+  const suffix = isAutoEdit ? "[edit]" : undefined;
+  const finalName = deriveSessionName(modifiedRaw, sessionName, suffix);
+  const named = await nameSession(client, session.id, finalName);
+
+  const output = buildReplayOutput(session.id, result, opts, modifiedRaw);
+  if (named) {
+    output.sessionName = finalName;
+    output.named = true;
+  }
+  console.log(JSON.stringify(output, null, 2));
 }
 
 export async function cmdGetSession(sessionIdOrName: string, opts: OutputOpts) {
@@ -446,15 +511,28 @@ export async function cmdReplaySessions(limit: number) {
   console.log(JSON.stringify({ results, count: results.length }, null, 2));
 }
 
-export async function cmdCreateSession(requestId: string, collectionId?: string) {
+export async function cmdCreateSession(requestId: string, collectionId?: string, sessionName?: string) {
   const client = await getClient();
   const session = await client.replay.sessions.create({
     requestSource: { id: requestId },
     ...(collectionId ? { collectionId } : {}),
   });
+  
+  const original = await client.request.get(requestId, { raw: true });
+  let finalName = "Session";
+  if (original && original.request.raw) {
+    const raw = decodeRaw(original.request.raw) || "";
+    finalName = deriveSessionName(raw, sessionName);
+    await nameSession(client, session.id, finalName);
+  } else if (sessionName) {
+    finalName = sessionName;
+    await nameSession(client, session.id, finalName);
+  }
+
   console.log(JSON.stringify({
     id: session.id,
-    name: session.name,
+    name: finalName !== "Session" ? finalName : session.name,
+    named: finalName !== "Session",
     collectionId: session.collectionId,
   }, null, 2));
 }

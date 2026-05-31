@@ -70,6 +70,7 @@ Usage:
 
   replay <request-id>          Replay a request (blocks until response)
     --raw <str|@file|->        Override with custom raw request
+    --name <session-name>      Name for the replay session (optional)
     --collection <id>          Add session to this collection
     --sni <hostname>           TLS Server Name Indication override
     --connect-host <host>      Connect to a different host
@@ -98,6 +99,7 @@ Usage:
     --body <body>              Set request body
     --replace <from>:::<to>    Replace text in request (repeatable)
     --session <id>             Reuse an existing replay session
+    --name <session-name>      Name for the replay session (optional)
     --collection <id>          Add new session to this collection
     --sni <hostname>           TLS Server Name Indication override
     --connect-host <host>      Connect to a different host
@@ -128,6 +130,7 @@ Usage:
 ═══════════════════════════════════════════════
 
   create-session <request-id>  Create a replay session from a request
+    --name <session-name>      Name for the replay session (optional)
     --collection <id>          Add session to this collection
   rename-session <id> <name>   Rename a replay session
   move-session <id> <coll-id>  Move a replay session to a collection
@@ -337,6 +340,7 @@ async function main() {
         parseOutputOpts(args, 2),
         parseConnectionOverrides(args, 2),
         parseCollectionId(args, 2),
+        parseSessionName(args, 2),
       );
       break;
     }
@@ -386,6 +390,7 @@ async function main() {
         parseOutputOpts(args, 2),
         parseConnectionOverrides(args, 2),
         parseCollectionId(args, 2),
+        parseSessionName(args, 2),
       );
       break;
     }
@@ -440,7 +445,7 @@ async function main() {
     // ── Replay Sessions ──
     case "create-session": {
       if (!args[1]) { console.error("Error: request-id required"); process.exit(1); }
-      await cmdCreateSession(args[1], parseCollectionId(args, 2));
+      await cmdCreateSession(args[1], parseCollectionId(args, 2), parseSessionName(args, 2));
       break;
     }
 
