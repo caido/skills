@@ -1,10 +1,16 @@
-/** HTTP History commands: search, recent, get, get-response, export-curl */
+/** HTTP History commands: search, recent, get, get-response, raw, export-curl */
 
 import { getClient } from "../client";
 import { decodeRaw, formatHttpRaw, rawToCurl } from "../output";
 import type { OutputOpts } from "../types";
 
-export async function cmdSearch(filter: string, limit: number, after?: string, idsOnly?: boolean, desc?: boolean) {
+/** Terse one-line-per-request rendering for fast, low-token browsing. */
+function compactLine(r: { id: string; method: string; host: string; path: string; query?: string; statusCode?: number }) {
+  const status = r.statusCode != null ? r.statusCode : "—";
+  return `${r.id}\t${status}\t${r.method} ${r.host}${r.path}${r.query ? "?" + r.query : ""}`;
+}
+
+export async function cmdSearch(filter: string, limit: number, after?: string, idsOnly?: boolean, desc?: boolean, compact?: boolean) {
   const client = await getClient();
   let builder = client.request.list().filter(filter).first(limit);
   if (desc) builder = builder.descending("req", "id");
@@ -33,6 +39,12 @@ export async function cmdSearch(filter: string, limit: number, after?: string, i
     cursor: e.cursor,
   }));
 
+  if (compact) {
+    for (const r of results) console.log(compactLine(r));
+    console.log(`# ${results.length} result(s)${connection.pageInfo?.hasNextPage ? `, more available (--after ${connection.pageInfo.endCursor})` : ""}`);
+    return;
+  }
+
   console.log(JSON.stringify({
     results,
     pageInfo: connection.pageInfo,
@@ -40,7 +52,7 @@ export async function cmdSearch(filter: string, limit: number, after?: string, i
   }, null, 2));
 }
 
-export async function cmdRecent(limit: number) {
+export async function cmdRecent(limit: number, compact?: boolean) {
   const client = await getClient();
   const connection = await client.request.list()
     .descending("req", "id")
@@ -51,10 +63,17 @@ export async function cmdRecent(limit: number) {
     method: e.node.request.method,
     host: e.node.request.host,
     path: e.node.request.path,
+    query: e.node.request.query || undefined,
     statusCode: e.node.response?.statusCode,
     roundtrip: e.node.response?.roundtripTime,
     createdAt: e.node.request.createdAt,
   }));
+
+  if (compact) {
+    for (const r of results) console.log(compactLine(r));
+    console.log(`# ${results.length} result(s)`);
+    return;
+  }
 
   console.log(JSON.stringify({ results, count: results.length }, null, 2));
 }
@@ -124,6 +143,36 @@ export async function cmdGetResponse(requestId: string, opts: OutputOpts) {
   }
 
   console.log(JSON.stringify(output, null, 2));
+}
+
+/**
+ * raw — dump the byte-exact raw request (or response) for a history request.
+ * Writes raw bytes (no JSON wrapper) so it can be piped/redirected into a file,
+ * tweaked, linted, and sent verbatim. This is the start of the testing workflow.
+ */
+export async function cmdRaw(requestId: string, opts: { out?: string; response?: boolean }) {
+  const client = await getClient();
+  const result = await client.request.get(requestId, { raw: true });
+
+  if (!result) {
+    console.error(`Request ${requestId} not found`);
+    process.exit(1);
+  }
+
+  const bytes: Uint8Array | undefined = opts.response ? result.response?.raw : result.request.raw;
+  if (!bytes || bytes.length === 0) {
+    console.error(`No raw ${opts.response ? "response" : "request"} data for request ${requestId}`);
+    process.exit(1);
+  }
+
+  const buf = Buffer.from(bytes);
+  if (opts.out) {
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(opts.out, buf);
+    console.error(`Wrote ${buf.length} bytes to ${opts.out}`);
+  } else {
+    process.stdout.write(buf);
+  }
 }
 
 export async function cmdExportCurl(requestId: string) {

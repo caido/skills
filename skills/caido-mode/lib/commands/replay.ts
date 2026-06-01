@@ -18,6 +18,13 @@ export interface ConnectionOverrides {
   connectTls?: boolean;
 }
 
+/**
+ * Editing a replay session is an explicit, named operation: the caller must
+ * declare intent — keep the current name (--no-name-change/--nonach) or set a
+ * new one (--new-name). This prevents silently leaving a stale auto-name.
+ */
+export type NameChange = { kind: "keep" } | { kind: "rename"; name: string };
+
 interface RawEdits {
   method?: string;
   path?: string;
@@ -145,6 +152,51 @@ async function resolveSession(client: any, idOrName: string) {
   return undefined;
 }
 
+/**
+ * Resolve a collection by id OR name to its id. Collections are referred to by
+ * name in this workflow, so `--collection "My Collection"` is the norm. Returns
+ * undefined if no collection matches (callers should error and tell the user to
+ * create it explicitly — collection names are mandatory and never auto-created).
+ */
+async function resolveCollectionId(client: any, idOrName: string): Promise<string | undefined> {
+  let after: string | undefined;
+  while (true) {
+    const page = after
+      ? await client.replay.collections.list().after(after, 100)
+      : await client.replay.collections.list().first(100);
+
+    for (const edge of page.edges) {
+      if (edge.node.id === idOrName || edge.node.name === idOrName) return edge.node.id;
+    }
+
+    if (!page.pageInfo.hasNextPage) break;
+    after = page.pageInfo.endCursor;
+  }
+  return undefined;
+}
+
+/** Resolve a --collection ref to an id, exiting with guidance if it doesn't exist. */
+async function requireCollection(client: any, ref: string | undefined): Promise<string | undefined> {
+  if (!ref) return undefined;
+  const id = await resolveCollectionId(client, ref);
+  if (!id) {
+    console.error(`Collection "${ref}" not found.`);
+    console.error(`List collections:  npx tsx caido-client.ts collections`);
+    console.error(`Create it (name is mandatory):  npx tsx caido-client.ts create-collection "${ref}"`);
+    process.exit(1);
+  }
+  return id;
+}
+
+/** Apply a NameChange to a just-touched session, returning the effective name. */
+async function applyNameChange(client: any, sessionId: string, current: string | undefined, change: NameChange): Promise<string | undefined> {
+  if (change.kind === "rename") {
+    await client.replay.sessions.rename(sessionId, change.name);
+    return change.name;
+  }
+  return current;
+}
+
 function buildReplayOutput(sessionId: string, result: any, opts: OutputOpts, modifiedRaw?: string) {
   const output: Record<string, any> = {
     sessionId,
@@ -199,9 +251,10 @@ async function createRawReplaySession(
 export async function cmdReplay(
   requestId: string,
   rawOverride: string | undefined,
+  name: string,
   opts: OutputOpts,
   overrides?: ConnectionOverrides,
-  collectionId?: string,
+  collectionRef?: string,
 ) {
   const client = await getClient();
   const original = await client.request.get(requestId, { raw: true });
@@ -210,9 +263,11 @@ export async function cmdReplay(
     process.exit(1);
   }
 
+  const collectionId = await requireCollection(client, collectionRef);
   const createOpts: any = { requestSource: { id: requestId } };
   if (collectionId) createOpts.collectionId = collectionId;
   const session = await client.replay.sessions.create(createOpts);
+  await client.replay.sessions.rename(session.id, name);
 
   const raw = rawOverride ? await resolveRaw(rawOverride) : decodeRaw(original.request.raw);
   if (!raw) {
@@ -228,7 +283,7 @@ export async function cmdReplay(
   );
 
   const result = await client.replay.send(session.id, { raw, connection });
-  console.log(JSON.stringify(buildReplayOutput(session.id, result, opts), null, 2));
+  console.log(JSON.stringify({ sessionName: name, ...buildReplayOutput(session.id, result, opts) }, null, 2));
 }
 
 export async function cmdSendRaw(
@@ -236,31 +291,35 @@ export async function cmdSendRaw(
   port: number,
   tls: boolean,
   raw: string,
+  name: string,
   opts: OutputOpts,
   overrides?: ConnectionOverrides,
-  collectionId?: string,
-  sessionName?: string,
+  collectionRef?: string,
 ) {
   const client = await getClient();
   raw = await resolveRaw(raw);
 
+  const collectionId = await requireCollection(client, collectionRef);
   const connection = buildConnection(host, port, tls, overrides);
   const session = await createRawReplaySession(client, raw, connection, collectionId);
-
-  if (sessionName) await client.replay.sessions.rename(session.id, sessionName);
+  await client.replay.sessions.rename(session.id, name);
 
   const result = await client.replay.send(session.id, { raw, connection });
-  console.log(JSON.stringify(buildReplayOutput(session.id, result, opts), null, 2));
+  console.log(JSON.stringify({ sessionName: name, ...buildReplayOutput(session.id, result, opts) }, null, 2));
 }
 
 // -- Edit --
 
+export type EditTarget =
+  | { kind: "new"; name: string; collectionRef?: string }
+  | { kind: "session"; ref: string; nameChange: NameChange };
+
 export async function cmdEdit(
   requestId: string,
-  edits: RawEdits & { sessionId?: string },
+  edits: RawEdits,
+  target: EditTarget,
   opts: OutputOpts,
   overrides?: ConnectionOverrides,
-  collectionId?: string,
 ) {
   const client = await getClient();
   const original = await client.request.get(requestId, { raw: true });
@@ -276,12 +335,27 @@ export async function cmdEdit(
   }
 
   const modifiedRaw = applyRawEdits(raw, edits);
-  const session = edits.sessionId
-    ? { id: edits.sessionId }
-    : await client.replay.sessions.create({
+
+  let sessionId: string;
+  let sessionName: string | undefined;
+  if (target.kind === "new") {
+    const collectionId = await requireCollection(client, target.collectionRef);
+    const session = await client.replay.sessions.create({
       requestSource: { id: requestId },
       ...(collectionId ? { collectionId } : {}),
     });
+    await client.replay.sessions.rename(session.id, target.name);
+    sessionId = session.id;
+    sessionName = target.name;
+  } else {
+    const session = await resolveSession(client, target.ref);
+    if (!session) {
+      console.error(`Replay session "${target.ref}" not found`);
+      process.exit(1);
+    }
+    sessionId = session.id;
+    sessionName = await applyNameChange(client, session.id, session.name, target.nameChange);
+  }
 
   const connection = buildConnection(
     original.request.host,
@@ -290,8 +364,8 @@ export async function cmdEdit(
     overrides,
   );
 
-  const result = await client.replay.send(session.id, { raw: modifiedRaw, connection });
-  console.log(JSON.stringify(buildReplayOutput(session.id, result, opts, modifiedRaw), null, 2));
+  const result = await client.replay.send(sessionId, { raw: modifiedRaw, connection });
+  console.log(JSON.stringify({ sessionName, ...buildReplayOutput(sessionId, result, opts, modifiedRaw) }, null, 2));
 }
 
 export async function cmdGetSession(sessionIdOrName: string, opts: OutputOpts) {
@@ -348,6 +422,7 @@ export async function cmdReplayEntries(
 export async function cmdEditSession(
   sessionIdOrName: string,
   edits: RawEdits,
+  nameChange: NameChange,
   opts: OutputOpts,
   overrides?: ConnectionOverrides,
 ) {
@@ -384,7 +459,8 @@ export async function cmdEditSession(
   );
 
   const result = await client.replay.send(session.id, { raw: modifiedRaw, connection });
-  console.log(JSON.stringify(buildReplayOutput(session.id, result, opts, modifiedRaw), null, 2));
+  const sessionName = await applyNameChange(client, session.id, session.name, nameChange);
+  console.log(JSON.stringify({ sessionName, ...buildReplayOutput(session.id, result, opts, modifiedRaw) }, null, 2));
 }
 
 function formatReplayEntry(entry: any, opts: OutputOpts, includeRaw: boolean) {
@@ -446,32 +522,45 @@ export async function cmdReplaySessions(limit: number) {
   console.log(JSON.stringify({ results, count: results.length }, null, 2));
 }
 
-export async function cmdCreateSession(requestId: string, collectionId?: string) {
+export async function cmdCreateSession(requestId: string, name: string, collectionRef?: string) {
   const client = await getClient();
+  const collectionId = await requireCollection(client, collectionRef);
   const session = await client.replay.sessions.create({
     requestSource: { id: requestId },
     ...(collectionId ? { collectionId } : {}),
   });
+  await client.replay.sessions.rename(session.id, name);
   console.log(JSON.stringify({
     id: session.id,
-    name: session.name,
-    collectionId: session.collectionId,
+    name,
+    collectionId: session.collectionId ?? collectionId ?? null,
   }, null, 2));
 }
 
-export async function cmdRenameSession(sessionId: string, name: string) {
+export async function cmdRenameSession(sessionRef: string, name: string) {
   const client = await getClient();
-  await client.replay.sessions.rename(sessionId, name);
-  console.log(JSON.stringify({ id: sessionId, name, renamed: true }, null, 2));
+  const session = await resolveSession(client, sessionRef);
+  if (!session) {
+    console.error(`Replay session "${sessionRef}" not found`);
+    process.exit(1);
+  }
+  await client.replay.sessions.rename(session.id, name);
+  console.log(JSON.stringify({ id: session.id, name, renamed: true }, null, 2));
 }
 
-export async function cmdMoveSession(sessionId: string, collectionId: string) {
+export async function cmdMoveSession(sessionRef: string, collectionRef: string) {
   const client = await getClient();
-  const session = await client.replay.sessions.move(sessionId, collectionId);
+  const session = await resolveSession(client, sessionRef);
+  if (!session) {
+    console.error(`Replay session "${sessionRef}" not found`);
+    process.exit(1);
+  }
+  const collectionId = await requireCollection(client, collectionRef);
+  const moved = await client.replay.sessions.move(session.id, collectionId!);
   console.log(JSON.stringify({
-    id: session.id,
-    name: session.name,
-    collectionId: session.collectionId,
+    id: moved.id,
+    name: moved.name,
+    collectionId: moved.collectionId,
     moved: true,
   }, null, 2));
 }
@@ -502,15 +591,17 @@ export async function cmdCreateCollection(name: string) {
   console.log(JSON.stringify({ id: collection.id, name: collection.name }, null, 2));
 }
 
-export async function cmdRenameCollection(collectionId: string, name: string) {
+export async function cmdRenameCollection(collectionRef: string, name: string) {
   const client = await getClient();
-  await client.replay.collections.rename(collectionId, name);
+  const collectionId = await requireCollection(client, collectionRef);
+  await client.replay.collections.rename(collectionId!, name);
   console.log(JSON.stringify({ id: collectionId, name, renamed: true }, null, 2));
 }
 
-export async function cmdDeleteCollection(collectionId: string) {
+export async function cmdDeleteCollection(collectionRef: string) {
   const client = await getClient();
-  await client.replay.collections.delete(collectionId);
+  const collectionId = await requireCollection(client, collectionRef);
+  await client.replay.collections.delete(collectionId!);
   console.log(JSON.stringify({ deleted: collectionId }, null, 2));
 }
 

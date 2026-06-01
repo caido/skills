@@ -1,7 +1,7 @@
 {
   "name": "caido-mode",
-  "version": "3.0.0",
-  "description": "Full Caido SDK CLI for Claude Code - search, replay, edit requests, manage findings, scopes, filters, and more",
+  "version": "3.1.0",
+  "description": "Full Caido SDK CLI for Claude Code - search history, craft/lint raw requests, replay, edit, manage findings, scopes, filters, and more",
   "type": "module",
   "scripts": {
     "caido": "tsx caido-client.ts"
