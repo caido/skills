@@ -77,6 +77,35 @@ export function normalizeRaw(raw: string): string {
   });
 }
 
+/**
+ * Normalize a raw request's HEADER line endings to CRLF, so a replay session
+ * created from scratch is never built with bare-LF (\n) line endings. Only the
+ * header section is touched; the body is left byte-exact (it may legitimately
+ * contain \n, e.g. JSON or multipart). Idempotent — re-running is a no-op.
+ */
+export function ensureHeaderCrlf(raw: string): string {
+  const idxCrlf = raw.indexOf("\r\n\r\n");
+  const idxLf = raw.indexOf("\n\n");
+
+  let headerBlock: string;
+  let body: string | undefined;
+  if (idxCrlf >= 0 && (idxLf < 0 || idxCrlf <= idxLf)) {
+    headerBlock = raw.slice(0, idxCrlf);
+    body = raw.slice(idxCrlf + 4);
+  } else if (idxLf >= 0) {
+    headerBlock = raw.slice(0, idxLf);
+    body = raw.slice(idxLf + 2);
+  } else {
+    headerBlock = raw; // no blank-line terminator; normalize what's there
+    body = undefined;
+  }
+
+  // Collapse any CRLF to LF, then promote every LF to CRLF — handles bare-LF and
+  // mixed endings without doubling existing CRLFs.
+  const headers = headerBlock.replace(/\r\n/g, "\n").replace(/\n/g, "\r\n");
+  return body === undefined ? headers : headers + "\r\n\r\n" + body;
+}
+
 function applyRawEdits(raw: string, edits: RawEdits): string {
   for (const rep of edits.replacements) {
     const [from, to] = rep.split(":::");
@@ -232,6 +261,8 @@ async function createRawReplaySession(
   connection: ConnectionInfoInput,
   collectionId?: string,
 ) {
+  // A session built from scratch must never carry bare-LF header endings.
+  raw = ensureHeaderCrlf(raw);
   const input: Record<string, any> = {
     requestSource: {
       raw: {
@@ -269,11 +300,13 @@ export async function cmdReplay(
   const session = await client.replay.sessions.create(createOpts);
   await client.replay.sessions.rename(session.id, name);
 
-  const raw = rawOverride ? await resolveRaw(rawOverride) : decodeRaw(original.request.raw);
+  let raw = rawOverride ? await resolveRaw(rawOverride) : decodeRaw(original.request.raw);
   if (!raw) {
     console.error("No raw data for this request");
     process.exit(1);
   }
+  // A user-supplied raw override is normalized to CRLF header endings.
+  if (rawOverride) raw = ensureHeaderCrlf(raw);
 
   const connection = buildConnection(
     original.request.host,
@@ -297,7 +330,8 @@ export async function cmdSendRaw(
   collectionRef?: string,
 ) {
   const client = await getClient();
-  raw = await resolveRaw(raw);
+  // Normalize header line endings once so the session and the sent bytes match.
+  raw = ensureHeaderCrlf(await resolveRaw(raw));
 
   const collectionId = await requireCollection(client, collectionRef);
   const connection = buildConnection(host, port, tls, overrides);

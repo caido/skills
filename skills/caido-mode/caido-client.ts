@@ -8,10 +8,9 @@
 import { parseOutputOpts, DEFAULT_OUTPUT_OPTS } from "./lib/types";
 
 // Commands
-import { cmdSearch, cmdRecent, cmdGet, cmdGetResponse, cmdRaw, cmdExportCurl } from "./lib/commands/requests";
+import { cmdSearch, cmdRecent, cmdGet, cmdGetResponse, cmdRaw, cmdExportCurl, cmdExportCurlConfig } from "./lib/commands/requests";
 import { cmdReplay, cmdSendRaw, cmdEdit, cmdGetSession, cmdReplayEntries, cmdEditSession, cmdReplaySessions, cmdCreateSession, cmdRenameSession, cmdMoveSession, cmdDeleteSessions, cmdReplayCollections, cmdCreateCollection, cmdRenameCollection, cmdDeleteCollection, cmdCreateAutomateSession, cmdFuzz } from "./lib/commands/replay";
 import type { ConnectionOverrides, NameChange, EditTarget } from "./lib/commands/replay";
-import { cmdLint } from "./lib/commands/lint";
 import { cmdFindings, cmdGetFinding, cmdCreateFinding, cmdUpdateFinding } from "./lib/commands/findings";
 import { cmdScopes, cmdCreateScope, cmdUpdateScope, cmdDeleteScope, cmdFilters, cmdCreateFilter, cmdUpdateFilter, cmdDeleteFilter, cmdEnvs, cmdCreateEnv, cmdSelectEnv, cmdEnvSet, cmdDeleteEnv, cmdProjects, cmdSelectProject, cmdHostedFiles, cmdDeleteHostedFile, cmdTasks, cmdCancelTask } from "./lib/commands/management";
 import { cmdInterceptStatus, cmdInterceptSet } from "./lib/commands/intercept";
@@ -113,12 +112,6 @@ Usage:
     --response                 Dump the raw response instead of the request
                                → npx tsx caido-client.ts raw 123 --out /tmp/req.txt
 
-  lint <file>                  Validate a raw HTTP request file before sending
-    --fix                      Rewrite normalized (CRLF, separator, Content-Length)
-    --out <file>               --fix destination (default: in place)
-    --json                     Machine-readable output
-                               → lint /tmp/req.txt && ncat --ssl host 443 < /tmp/req.txt
-
   replay <request-id>          Replay into a NEW named replay session (handoff)
     --name <name>              Session name (REQUIRED)
     --raw <str|@file|->        Override with custom raw request
@@ -156,7 +149,10 @@ Usage:
     --collection <name|id>     Put new session in this collection (must exist)
     --sni / --connect-host / --connect-port / --connect-tls / --connect-no-tls
 
-  export-curl <request-id>     Export request as curl command
+  export-curl <request-id>     Export a FULL self-contained curl command (give to user)
+    --config                   Instead, write a reusable curl -K config + cookie jar
+                               for INTERNAL testing (proxies through Caido)
+    --out <file>               Config path (default: /tmp/caido/<host>/auth.cfg)
 
 ═══════════════════════════════════════════════
  REPLAY TAB LOOKUP
@@ -306,17 +302,19 @@ Usage:
 
   setup <pat> [url]            Save PAT and validate via SDK
                                (url defaults to http://localhost:8080)
-  auth-status                  Check current auth status
+    --proxy <addr>             Caido proxy for curl -x (defaults to the Caido URL)
+  auth-status                  Check current auth status (also prints the proxy)
 
   Or set env vars:
     export CAIDO_PAT=<token>
     export CAIDO_URL=http://localhost:8080
+    export CAIDO_PROXY=...      # only if the proxy listener differs from CAIDO_URL
 
-Primary testing workflow (curl/raw socket — NOT replay):
+Primary testing workflow (curl, proxied through Caido — NOT replay):
   npx tsx caido-client.ts search 'req.path.cont:"/api/user"' --recent --compact
-  npx tsx caido-client.ts raw 12345 --out /tmp/req.txt        # pull a base request
-  # tweak /tmp/req.txt, then validate + send byte-exact:
-  npx tsx caido-client.ts lint /tmp/req.txt && ncat --ssl target.com 443 < /tmp/req.txt
+  npx tsx caido-client.ts export-curl 12345        # grab a base request as curl
+  # then test with curl, always proxying through Caido so it lands in history:
+  curl -x http://127.0.0.1:8080 -k 'https://target.com/api/user/999' -H 'Cookie: ...'
 
 Handoff to the user (named replay sessions in named collections):
   npx tsx caido-client.ts create-collection "Vuln chain - IDOR to ATO"
@@ -396,23 +394,6 @@ async function main() {
       break;
     }
 
-    case "lint": {
-      if (!args[1]) {
-        console.error("Error: path to a raw request file required");
-        console.error("Usage: npx tsx caido-client.ts lint <file> [--fix] [--out <file>] [--json]");
-        process.exit(2);
-      }
-      let out: string | undefined;
-      let fix = false, json = false;
-      for (let i = 2; i < args.length; i++) {
-        if (args[i] === "--out" && args[i + 1]) { out = args[i + 1]; i++; }
-        else if (args[i] === "--fix") { fix = true; }
-        else if (args[i] === "--json") { json = true; }
-      }
-      await cmdLint(args[1], { fix, out, json });
-      break;
-    }
-
     case "replay": {
       if (!args[1]) { console.error("Error: request-id required"); process.exit(1); }
       const name = requireName(args, 2, "creating a replay session with `replay`");
@@ -487,7 +468,13 @@ async function main() {
 
     case "export-curl": {
       if (!args[1]) { console.error("Error: request-id required"); process.exit(1); }
-      await cmdExportCurl(args[1]);
+      let asConfig = false, ecOut: string | undefined;
+      for (let i = 2; i < args.length; i++) {
+        if (args[i] === "--config") { asConfig = true; }
+        else if (args[i] === "--out" && args[i + 1]) { ecOut = args[i + 1]; i++; }
+      }
+      if (asConfig) await cmdExportCurlConfig(args[1], ecOut);
+      else await cmdExportCurl(args[1]);
       break;
     }
 
@@ -773,12 +760,17 @@ async function main() {
     case "setup": {
       const pat = args[1];
       if (!pat) {
-        console.error("Usage: npx tsx caido-client.ts setup <pat> [url]");
+        console.error("Usage: npx tsx caido-client.ts setup <pat> [url] [--proxy <addr>]");
         console.error("\nGet a PAT from: Caido → Settings → Developer → Personal Access Tokens");
         process.exit(1);
       }
-      const url = args[2] || process.env.CAIDO_URL || "http://localhost:8080";
-      await cmdSetup(pat, url);
+      let url: string | undefined, proxy: string | undefined;
+      for (let i = 2; i < args.length; i++) {
+        if (args[i] === "--proxy" && args[i + 1]) { proxy = args[i + 1]; i++; }
+        else if (!args[i].startsWith("--") && !url) { url = args[i]; }
+      }
+      url = url || process.env.CAIDO_URL || "http://localhost:8080";
+      await cmdSetup(pat, url, proxy);
       break;
     }
     case "auth-status": { await cmdAuthStatus(); break; }

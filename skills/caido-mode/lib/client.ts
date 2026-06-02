@@ -18,7 +18,21 @@ export interface CaidoConfig {
 export interface CaidoSecrets {
   url?: string;
   pat?: string;
+  proxy?: string;
   cachedToken?: { accessToken?: string; expiresAt?: string };
+}
+
+/**
+ * Resolve Caido's proxy listener address for `curl -x`.
+ * Caido's proxy and API share an address, so the proxy defaults to the Caido URL.
+ * Precedence: CAIDO_PROXY env → stored proxy → Caido URL (env/secrets) → localhost:8080.
+ * Only set CAIDO_PROXY / `setup --proxy` when the proxy listener differs from the URL.
+ */
+export function resolveProxy(): string {
+  if (process.env.CAIDO_PROXY) return process.env.CAIDO_PROXY;
+  const secrets = readCaidoSecrets();
+  if (secrets.proxy) return secrets.proxy;
+  return process.env.CAIDO_URL || secrets.url || "http://localhost:8080";
 }
 
 function readCaidoSecrets(): CaidoSecrets {

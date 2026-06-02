@@ -1,12 +1,12 @@
 # Caido Mode
 
-Full SDK CLI for [Caido](https://caido.io) built on the official [`@caido/sdk-client`](https://github.com/caido/sdk-js) package. Search HTTP history, pull base requests to raw files, lint + send them byte-exact, organize handoffs into named replay sessions/collections, manage scopes/filters/environments, create findings, and fuzz — all from the terminal.
+Full SDK CLI for [Caido](https://caido.io) built on the official [`@caido/sdk-client`](https://github.com/caido/sdk-js) package. Search HTTP history, test with curl proxied through Caido (caching auth into reusable curl config files + cookie jars), organize handoffs into named replay sessions/collections, manage scopes/filters/environments, create findings, and fuzz — all from the terminal.
 
 ## Why?
 
 Cookies and auth tokens are huge. Instead of copy-pasting 2KB of session cookies into every test request, you find an organic request in Caido's history that already has valid auth and work from it. Two modes, kept strictly separate:
 
-1. **Testing → curl / raw sockets.** `raw <id> --out req.txt` pulls a base request's exact bytes; tweak it, `lint` it, send it with `ncat`/`openssl`. Fast, ephemeral, leaves Replay clean.
+1. **Testing → curl, proxied through Caido.** `export-curl <id> --config` caches a base request's auth into a reusable `-K` config + cookie jar under `/tmp/caido/<host>/`; then probe with `curl -K auth.cfg "$BASE/path"`. All traffic goes through Caido into history; the big auth blob stays in a file.
 2. **Handoff → named replay sessions in named collections.** Only when handing requests to the user do you materialize them in Caido's UI.
 
 ## What's Covered
@@ -14,7 +14,7 @@ Cookies and auth tokens are huge. Instead of copy-pasting 2KB of session cookies
 | Category | Commands |
 |----------|----------|
 | **HTTP History** | `search`, `recent`, `get`, `get-response`, `raw`, `export-curl` |
-| **Craft & Validate** | `raw` (dump to file), `lint` (validate raw request, `--fix`) |
+| **curl testing** | `export-curl` (full command), `export-curl --config` (reusable `-K` config + cookie jar), `raw` (dump bytes) |
 | **Edit & Replay** | `edit`, `replay`, `send-raw`, `edit-session` |
 | **Replay Tab Lookup** | `get-session`, `replay-entries`, `session-entries` |
 | **Sessions** | `create-session`, `rename-session`, `move-session`, `sessions`, `delete-sessions` |
@@ -63,8 +63,7 @@ lib/
   output.ts              # Output formatting (truncation, headers-only, raw→curl)
   types.ts               # Shared types (OutputOpts)
   commands/
-    requests.ts          # search, recent, get, get-response, raw, export-curl
-    lint.ts              # lint (+ --fix) — pure raw-request validation, no Caido needed
+    requests.ts          # search, recent, get, get-response, raw, export-curl (+ --config)
     replay.ts            # replay, send-raw, edit, replay-tab lookup, sessions, collections, automate, fuzz
     findings.ts          # findings, get-finding, create-finding, update-finding
     management.ts        # scopes, filters, environments, projects, hosted-files, tasks
@@ -93,34 +92,33 @@ npx tsx caido-client.ts get <request-id>
 # Just the response
 npx tsx caido-client.ts get-response <request-id>
 
-# Byte-exact raw request → a file (start of the testing workflow)
-npx tsx caido-client.ts raw <request-id> --out /tmp/req.txt
+# Dump raw bytes to a file (e.g. seed a request body)
+npx tsx caido-client.ts raw <request-id> --out /tmp/caido/target.com/body.json
 ```
 
-### Primary testing workflow (curl / raw socket)
+### Primary testing workflow (curl through Caido)
 
-Pull a base request to a file, tweak it, lint it, send it byte-exact. This keeps Replay clean.
+Cache a base request's auth once, then probe with curl. Every request goes through Caido into history; the auth blob stays in a file.
 
 ```bash
-# 1. find a base request
+# 1. find an authenticated base request
 npx tsx caido-client.ts search 'req.host.cont:"target.com" AND req.path.cont:"/api/user"' --recent --compact
-# 2. pull its exact bytes to a file
-npx tsx caido-client.ts raw 8431 --out /tmp/req.txt
-# 3. tweak /tmp/req.txt (keep auth headers), then 4. validate + send byte-exact
-npx tsx caido-client.ts lint /tmp/req.txt && ncat --ssl target.com 443 < /tmp/req.txt
+# 2. ONCE: write a reusable curl config + cookie jar (proxy + auth baked in)
+npx tsx caido-client.ts export-curl 8431 --config
+#    → /tmp/caido/target.com/auth.cfg + cookies.txt, BASE=https://target.com
+# 3. test (the config carries the Caido proxy + auth; cookies auto-rotate via the jar)
+BASE=https://target.com
+curl -K /tmp/caido/target.com/auth.cfg "$BASE/api/user/999"
+curl -K /tmp/caido/target.com/auth.cfg -X POST "$BASE/api/profile" --data-binary @body.json
 ```
 
-`curl --data-binary` can't transmit a full raw request (it rebuilds the request line/headers and sends only a body), so byte-exact sends use `ncat`/`openssl s_client`. To keep traffic in Caido, use `send-raw` (creates a replay session) or curl `-x` through Caido's proxy.
-
-### Linting raw request files
-
-`lint` is a pure file check (no Caido connection) designed for `lint && send` chaining. It errors on bare-LF endings, LF-only separators, missing `\r\n\r\n`, Content-Length mismatches, and malformed request lines; it warns (but allows) on smuggling-relevant cases like dual Content-Length / Transfer-Encoding.
+The config is for **internal** testing. When you hand the user a reproduction, always give a **full self-contained** curl (all headers inline):
 
 ```bash
-npx tsx caido-client.ts lint /tmp/req.txt           # report + exit code (0 ok, 1 errors)
-npx tsx caido-client.ts lint /tmp/req.txt --fix      # normalize CRLF/separator/Content-Length in place
-npx tsx caido-client.ts lint /tmp/req.txt --json
+npx tsx caido-client.ts export-curl 8431      # full, portable curl command for the user
 ```
+
+Refresh lazily: only on 401/403 do you re-run `export-curl <fresh-id> --config`. The proxy defaults to the Caido URL; override with `setup --proxy <addr>` or `CAIDO_PROXY`.
 
 ### Edit & Replay (handoff / explicit in-Replay testing)
 
@@ -168,7 +166,9 @@ npx tsx caido-client.ts replay <id> --name "repro" --connect-host 10.0.0.5 --con
 ### Export to curl
 
 ```bash
-npx tsx caido-client.ts export-curl <request-id>
+npx tsx caido-client.ts export-curl <request-id>            # full self-contained command (for the user)
+npx tsx caido-client.ts export-curl <request-id> --config   # reusable -K config + cookie jar (internal)
+npx tsx caido-client.ts export-curl <request-id> --config --out /tmp/caido/host/auth.cfg
 ```
 
 ### Findings

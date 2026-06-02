@@ -3,7 +3,7 @@
 import { Client } from "@caido/sdk-client";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { dirname } from "path";
-import { getClient, loadConfig, SecretsTokenCache, SECRETS_PATH, isCachedTokenValid, type CaidoSecrets } from "../client";
+import { getClient, loadConfig, resolveProxy, SecretsTokenCache, SECRETS_PATH, isCachedTokenValid, type CaidoSecrets } from "../client";
 import { PLUGIN_PACKAGES_QUERY } from "../graphql";
 
 export async function cmdViewer() {
@@ -24,7 +24,7 @@ export async function cmdHealth() {
   console.log(JSON.stringify(health, null, 2));
 }
 
-export async function cmdSetup(pat: string, url: string) {
+export async function cmdSetup(pat: string, url: string, proxy?: string) {
   console.log(`Connecting to ${url}...`);
 
   const setupCache = new SecretsTokenCache();
@@ -59,12 +59,14 @@ export async function cmdSetup(pat: string, url: string) {
   if (!secrets.caido) secrets.caido = {};
   secrets.caido.url = url;
   secrets.caido.pat = pat;
+  if (proxy) secrets.caido.proxy = proxy;
   writeFileSync(SECRETS_PATH, JSON.stringify(secrets, null, 2));
 
   console.log(`\nSaved to ${SECRETS_PATH}`);
   console.log(`URL: ${url}`);
   console.log(`PAT: ${pat.slice(0, 12)}...`);
   console.log(`Access token: cached`);
+  console.log(`Proxy (curl -x): ${resolveProxy()}`);
 }
 
 export async function cmdAuthStatus() {
@@ -96,6 +98,7 @@ export async function cmdAuthStatus() {
       cachedTokenExpiresAt: cachedExpiresAt,
       cachedTokenValid,
       url: config.url,
+      proxy: resolveProxy(),
       user: viewer,
       health,
     }, null, 2));
