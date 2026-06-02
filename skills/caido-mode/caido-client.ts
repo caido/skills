@@ -300,14 +300,17 @@ Usage:
  SETUP & AUTH
 ═══════════════════════════════════════════════
 
-  setup <pat> [url]            Save PAT and validate via SDK
+  setup <pat> [url]            Save PAT (keyed by URL) and validate via SDK
                                (url defaults to http://localhost:8080)
     --proxy <addr>             Caido proxy for curl -x (defaults to the Caido URL)
-  auth-status                  Check current auth status (also prints the proxy)
+  auth-status                  Check auth for the active instance + list all instances
+
+  Multiple instances: credentials are keyed by URL; setup a second URL to add it.
+  Active instance = CAIDO_URL env → stored default → http://localhost:8080.
 
   Or set env vars:
     export CAIDO_PAT=<token>
-    export CAIDO_URL=http://localhost:8080
+    export CAIDO_URL=http://localhost:8081     # selects the active instance per shell
     export CAIDO_PROXY=...      # only if the proxy listener differs from CAIDO_URL
 
 Primary testing workflow (curl, proxied through Caido — NOT replay):

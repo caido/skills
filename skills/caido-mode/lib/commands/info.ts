@@ -1,9 +1,10 @@
 /** Info commands: viewer, plugins, health, setup, auth-status */
 
 import { Client } from "@caido/sdk-client";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
-import { dirname } from "path";
-import { getClient, loadConfig, resolveProxy, SecretsTokenCache, SECRETS_PATH, isCachedTokenValid, type CaidoSecrets } from "../client";
+import {
+  getClient, resolveProxy, resolveActiveUrl, readCaidoRoot, getCaidoInstance,
+  upsertCaidoInstance, SecretsTokenCache, SECRETS_PATH, isCachedTokenValid,
+} from "../client";
 import { PLUGIN_PACKAGES_QUERY } from "../graphql";
 
 export async function cmdViewer() {
@@ -27,7 +28,8 @@ export async function cmdHealth() {
 export async function cmdSetup(pat: string, url: string, proxy?: string) {
   console.log(`Connecting to ${url}...`);
 
-  const setupCache = new SecretsTokenCache();
+  // Cache the access token under THIS instance's slot (clear any stale one first).
+  const setupCache = new SecretsTokenCache(url);
   await setupCache.clear();
 
   const client = new Client({
@@ -48,69 +50,57 @@ export async function cmdSetup(pat: string, url: string, proxy?: string) {
   const viewer = await client.user.viewer();
   console.log(`Authenticated as: ${(viewer as any).username || (viewer as any).id || JSON.stringify(viewer)}`);
 
-  // Save PAT and URL (access token already cached by SecretsTokenCache during connect)
-  const dir = dirname(SECRETS_PATH);
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  // Persist PAT (+ proxy) under instances[url] and make it the active default.
+  // The access token was already cached under instances[url] during connect.
+  upsertCaidoInstance(url, { pat, ...(proxy ? { proxy } : {}) }, true);
 
-  let secrets: Record<string, any> = {};
-  if (existsSync(SECRETS_PATH)) {
-    try { secrets = JSON.parse(readFileSync(SECRETS_PATH, "utf-8")); } catch {}
-  }
-  if (!secrets.caido) secrets.caido = {};
-  secrets.caido.url = url;
-  secrets.caido.pat = pat;
-  if (proxy) secrets.caido.proxy = proxy;
-  writeFileSync(SECRETS_PATH, JSON.stringify(secrets, null, 2));
-
-  console.log(`\nSaved to ${SECRETS_PATH}`);
-  console.log(`URL: ${url}`);
+  console.log(`\nSaved to ${SECRETS_PATH} (instance: ${url})`);
   console.log(`PAT: ${pat.slice(0, 12)}...`);
   console.log(`Access token: cached`);
   console.log(`Proxy (curl -x): ${resolveProxy()}`);
+  console.log(`\nActive instance is now ${url}. Switch instances per shell with CAIDO_URL=<url>.`);
 }
 
 export async function cmdAuthStatus() {
-  const config = loadConfig();
+  const url = resolveActiveUrl();
+  const root = readCaidoRoot();
+  const instance = getCaidoInstance(root, url);
 
-  const rawSecrets = existsSync(SECRETS_PATH)
-    ? (() => { try { return JSON.parse(readFileSync(SECRETS_PATH, "utf-8")); } catch { return {}; } })()
-    : {};
-  const caidoSecrets: CaidoSecrets = (rawSecrets?.caido ?? {}) as CaidoSecrets;
+  const hasPat = !!process.env.CAIDO_PAT || !!instance.pat;
+  const cachedTokenValid = isCachedTokenValid(instance);
+  const cachedTokenExpiresAt = instance.cachedToken?.expiresAt ?? null;
+  const authMode = hasPat ? "pat" : (cachedTokenValid ? "cached-token" : "none");
 
-  const cachedExpiresAt: string | null = caidoSecrets.cachedToken?.expiresAt ?? null;
-  const cachedTokenValid = isCachedTokenValid(caidoSecrets);
-  const hasPat = !!caidoSecrets.pat || !!process.env.CAIDO_PAT;
+  const base = {
+    activeUrl: url,
+    defaultUrl: root.default ?? null,
+    configuredInstances: Object.keys(root.instances ?? {}),
+    authMode,
+    hasPat,
+    cachedTokenExpiresAt,
+    cachedTokenValid,
+    proxy: resolveProxy(),
+  };
 
-  const statusCache = new SecretsTokenCache();
-  const client = new Client({
-    url: config.url,
-    auth: { pat: config.pat, cache: statusCache },
-  });
+  if (!hasPat && !cachedTokenValid) {
+    console.log(JSON.stringify({
+      authenticated: false,
+      ...base,
+      error: `No usable auth for ${url}. Run: setup <pat> ${url}  (or set CAIDO_PAT / CAIDO_URL).`,
+    }, null, 2));
+    return;
+  }
+
+  const statusCache = new SecretsTokenCache(url);
+  const pat = process.env.CAIDO_PAT || instance.pat || "";
+  const client = new Client({ url, auth: { pat, cache: statusCache } });
 
   try {
     await client.connect({ ready: { retries: 2, timeout: 3000, interval: 1000 } });
     const viewer = await client.user.viewer();
     const health = await client.health();
-    console.log(JSON.stringify({
-      authenticated: true,
-      authMode: config.authMode,
-      hasPat,
-      cachedTokenExpiresAt: cachedExpiresAt,
-      cachedTokenValid,
-      url: config.url,
-      proxy: resolveProxy(),
-      user: viewer,
-      health,
-    }, null, 2));
+    console.log(JSON.stringify({ authenticated: true, ...base, user: viewer, health }, null, 2));
   } catch (err: any) {
-    console.log(JSON.stringify({
-      authenticated: false,
-      authMode: config.authMode,
-      hasPat,
-      cachedTokenExpiresAt: cachedExpiresAt,
-      cachedTokenValid,
-      url: config.url,
-      error: err.message,
-    }, null, 2));
+    console.log(JSON.stringify({ authenticated: false, ...base, error: err.message }, null, 2));
   }
 }

@@ -51,7 +51,15 @@ npx tsx caido-client.ts recent --limit 1
 export CAIDO_PAT=<your-pat>
 ```
 
-The `setup` command uses the SDK's device code flow (auto-approved by your PAT) to obtain an access token, then saves both the PAT and cached token to `~/.claude/config/secrets.json` via a custom `TokenCache` implementation. Subsequent runs load the cached token directly, and a valid cached token can be used even when the PAT is absent.
+The `setup` command uses the SDK's device code flow (auto-approved by your PAT) to obtain an access token, then saves the PAT and cached token to `~/.claude/config/secrets.json` via a custom `TokenCache` implementation. Subsequent runs load the cached token directly, and a valid cached token can be used even when the PAT is absent.
+
+**Multiple instances:** credentials are keyed by instance URL, so two Caido instances on one machine never clobber each other. `setup <pat> <url>` stores that instance (and makes it the active default); setting up a second URL adds it rather than overwriting. The active instance is `CAIDO_URL` env → stored default → `http://localhost:8080` — select per shell with `CAIDO_URL` (concurrency-safe). `auth-status` lists all configured instances and the active one.
+
+```bash
+npx tsx caido-client.ts setup <pat-a> http://localhost:8080
+npx tsx caido-client.ts setup <pat-b> http://localhost:8081
+CAIDO_URL=http://localhost:8081 npx tsx caido-client.ts recent --compact
+```
 
 ## File Structure
 

@@ -122,9 +122,26 @@ npx tsx caido-client.ts health             # verify instance is up
 ```
 
 `setup` validates the PAT via the SDK's device-code flow (auto-approved by the PAT), then caches
-the PAT + access token (and proxy/url) to `~/.claude/config/secrets.json`. Subsequent runs use the
+the PAT + access token (+ proxy) to `~/.claude/config/secrets.json`. Subsequent runs use the
 cached token; a valid cached token works even without the PAT. If authorization isn't working, the
 environment also provides `CAIDO_TEAM_PAT` and `CAIDO_PERSONAL_PAT`.
+
+### Multiple Caido instances
+
+Credentials are **keyed by instance URL** — two instances on one machine never clobber each other.
+`setup <pat> <url>` stores that instance under its URL (and makes it the active default);
+setting up a second URL adds a second entry rather than overwriting the first.
+
+```bash
+npx tsx caido-client.ts setup <pat-a> http://localhost:8080
+npx tsx caido-client.ts setup <pat-b> http://localhost:8081     # added, not overwritten
+npx tsx caido-client.ts auth-status                              # lists configuredInstances + activeUrl
+```
+
+The **active instance** is `CAIDO_URL` env → stored default → `http://localhost:8080`. Select per
+shell/agent with `CAIDO_URL` (concurrency-safe — no shared "current instance" to race on), e.g.
+`CAIDO_URL=http://localhost:8081 npx tsx caido-client.ts recent`. `CAIDO_PAT`/`CAIDO_PROXY` env
+override the active instance's stored values.
 
 ---
 
