@@ -197,6 +197,20 @@ npx tsx caido-client.ts edit 8431 --path /api/admin --session "IDOR victim 999" 
 `--set-header`, `--remove-header`, `--body` (auto Content-Length), `--replace <from>:::<to>`, and
 connection overrides (`--sni`, `--connect-host`, …).
 
+### Inspecting an existing replay tab
+
+When a replay tab is already open in Caido and you want to work from its current state, look it
+up by **name or id** (no need to re-create it):
+
+```bash
+npx tsx caido-client.ts get-session "IDOR victim 999" --compact      # session + its active entry
+npx tsx caido-client.ts replay-entries "IDOR victim 999" --limit 20  # request/response history in the tab
+npx tsx caido-client.ts replay-entries "IDOR victim 999" --raw --compact   # include raw bytes
+```
+
+`session-entries` is an alias for `replay-entries`. Use these to read what's in a tab; use
+`edit-session` (above) to send a modified request into it.
+
 ---
 
 ## Collections — use them heavily
@@ -320,6 +334,48 @@ npx tsx caido-client.ts create-automate-session 8431   # configure payloads in U
 npx tsx caido-client.ts intercept-status | intercept-enable | intercept-disable
 npx tsx caido-client.ts projects ; npx tsx caido-client.ts viewer ; npx tsx caido-client.ts plugins
 ```
+
+---
+
+## Full command reference
+
+Every command (run `npx tsx caido-client.ts <command>`). Sessions/collections accept a **name or
+id**; output is JSON unless noted. Run `--help` for full flag lists.
+
+| Command | What it does |
+|---|---|
+| **History & testing** | |
+| `search <httpql>` | Search history. `--limit --after --ids-only --recent --compact` |
+| `recent` | Newest requests. `--limit --compact` |
+| `get <id>` / `get-response <id>` | Full request / just the response (output-control flags) |
+| `raw <id>` | Dump byte-exact raw request. `--out <file> --response` |
+| `export-curl <id>` | Full self-contained curl (for the user) |
+| `export-curl <id> --config` | Reusable `-K` config + cookie jar (internal). `--out <file>` |
+| **Send / edit** | |
+| `replay <id> --name <n>` | Replay into a new named session. `--raw --collection` + connection overrides |
+| `send-raw --host <h> --raw <s\|@file\|-> --name <n>` | Send a raw request via a new named session. `--port --tls/--no-tls --collection` |
+| `edit <id>` | Edit + send into replay. `--method --path --set-header --remove-header --body --replace --session --name/--new-name/--nonach --collection` |
+| `edit-session <name\|id>` | Edit + send from a session's active entry (requires `--nonach` or `--new-name`) |
+| **Replay tab lookup** | |
+| `get-session <name\|id>` | Session + active entry. `--compact` |
+| `replay-entries <name\|id>` | Request history in a tab (alias `session-entries`). `--limit --raw` |
+| **Sessions** | |
+| `create-session <id> --name <n>` | New named session from a request. `--collection` |
+| `rename-session <name\|id> <new>` · `move-session <s> <collection>` | Rename / move |
+| `sessions` (alias `replay-sessions`) · `delete-sessions <id,id,…>` | List / delete |
+| **Collections** | |
+| `collections` (alias `replay-collections`) | List collections |
+| `create-collection <name>` · `rename-collection <c> <new>` · `delete-collection <name\|id>` | Create / rename / delete |
+| **Fuzzing** | `create-automate-session <id>` · `fuzz <session-id>` (configure payloads in UI) |
+| **Findings** | `findings` · `get-finding <id>` · `create-finding <id> --title …` · `update-finding <id>` |
+| **Scopes** | `scopes` · `create-scope <name> --allow --deny` · `update-scope <id>` · `delete-scope <id>` |
+| **Filters** | `filters` · `create-filter <name> --query [--alias]` · `update-filter <id>` · `delete-filter <id>` |
+| **Environments** | `envs` · `create-env <name>` · `env-set <env> <var> <val>` · `select-env [id]` · `delete-env <id>` |
+| **Projects** | `projects` · `select-project <id>` |
+| **Tasks** | `tasks` · `cancel-task <id>` |
+| **Hosted files** | `hosted-files` · `delete-hosted-file <id>` |
+| **Intercept** | `intercept-status` · `intercept-enable` · `intercept-disable` |
+| **Info / auth** | `viewer` · `plugins` · `health` · `setup <pat> [url] [--proxy]` · `auth-status` |
 
 ---
 
