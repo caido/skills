@@ -17,12 +17,23 @@
  */
 
 import { Client, type TokenCache, type CachedToken } from "@caido/sdk-client";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "fs";
 import { homedir } from "os";
 import { join, dirname } from "path";
 
 const SECRETS_PATH = join(homedir(), ".claude", "config", "secrets.json");
 const DEFAULT_URL = "http://localhost:8080";
+
+/**
+ * Canonicalize an instance URL used as a storage key, so the same instance
+ * referenced as `…:8080`, `…:8080/`, or with a differently-cased host all map
+ * to one entry. Strips trailing slashes and lowercases the scheme+authority,
+ * leaving any path untouched.
+ */
+export function canonicalUrl(u: string): string {
+  const s = u.trim().replace(/\/+$/, "");
+  return s.replace(/^([a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^/?#]+)/, (m) => m.toLowerCase());
+}
 
 export type AuthMode = "pat" | "cached-token";
 
@@ -56,11 +67,11 @@ function readSecretsFile(): Record<string, any> {
 /** Migrate the legacy flat `.caido` ({ url, pat, proxy, cachedToken, …dead keys }) to URL-keyed. */
 function normalizeRoot(raw: any): CaidoRoot {
   if (!raw || typeof raw !== "object") return { instances: {} };
-  if (raw.instances && typeof raw.instances === "object") {
+  if (raw.instances && typeof raw.instances === "object" && !Array.isArray(raw.instances)) {
     return { default: raw.default, instances: raw.instances };
   }
 
-  const url = typeof raw.url === "string" ? raw.url : DEFAULT_URL;
+  const url = canonicalUrl(typeof raw.url === "string" ? raw.url : DEFAULT_URL);
   const inst: CaidoInstance = {};
   if (raw.pat) inst.pat = raw.pat;
   if (raw.proxy) inst.proxy = raw.proxy;
@@ -74,31 +85,39 @@ export function readCaidoRoot(): CaidoRoot {
   return normalizeRoot(readSecretsFile().caido);
 }
 
-/** Persist the normalized `.caido` root, leaving other services' secrets intact. */
+/**
+ * Persist the normalized `.caido` root, leaving other services' secrets intact.
+ * Writes a temp file and renames it into place (atomic on the same filesystem) so a
+ * concurrent reader/writer can never observe or persist a torn secrets.json — which
+ * matters because the file is shared across services.
+ */
 function writeCaidoRoot(root: CaidoRoot): void {
   const dir = dirname(SECRETS_PATH);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const secrets = readSecretsFile();
   secrets.caido = { default: root.default, instances: root.instances ?? {} };
-  writeFileSync(SECRETS_PATH, JSON.stringify(secrets, null, 2));
+  const tmp = `${SECRETS_PATH}.tmp.${process.pid}`;
+  writeFileSync(tmp, JSON.stringify(secrets, null, 2));
+  renameSync(tmp, SECRETS_PATH);
 }
 
 /** Create/merge one instance's config (and optionally make it the default/active one). */
 export function upsertCaidoInstance(url: string, patch: Partial<CaidoInstance>, setDefault = false): void {
+  const key = canonicalUrl(url);
   const root = readCaidoRoot();
   root.instances = root.instances ?? {};
-  root.instances[url] = { ...root.instances[url], ...patch };
-  if (setDefault || !root.default) root.default = url;
+  root.instances[key] = { ...root.instances[key], ...patch };
+  if (setDefault || !root.default) root.default = key;
   writeCaidoRoot(root);
 }
 
 export function getCaidoInstance(root: CaidoRoot, url: string): CaidoInstance {
-  return root.instances?.[url] ?? {};
+  return root.instances?.[canonicalUrl(url)] ?? {};
 }
 
 /** Active instance URL: CAIDO_URL env → stored default → localhost:8080. */
 export function resolveActiveUrl(): string {
-  if (process.env.CAIDO_URL) return process.env.CAIDO_URL;
+  if (process.env.CAIDO_URL) return canonicalUrl(process.env.CAIDO_URL);
   return readCaidoRoot().default || DEFAULT_URL;
 }
 
@@ -131,9 +150,11 @@ export class SecretsTokenCache implements TokenCache {
 
   async load(): Promise<CachedToken | undefined> {
     if (this._cachedToken) return this._cachedToken;
-    const t = getCaidoInstance(readCaidoRoot(), this.url).cachedToken;
-    if (t?.accessToken) {
-      this._cachedToken = t;
+    const instance = getCaidoInstance(readCaidoRoot(), this.url);
+    // Only hand back a still-valid token — never an expired one, so the SDK
+    // falls through to PAT auth and re-mints instead of using a dead token.
+    if (instance.cachedToken?.accessToken && isCachedTokenValid(instance)) {
+      this._cachedToken = instance.cachedToken;
       return this._cachedToken;
     }
     return undefined;

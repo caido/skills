@@ -154,14 +154,14 @@ Work directly from an existing Caido replay tab/session.
 npx tsx caido-client.ts get-session <session-id-or-name> --compact
 npx tsx caido-client.ts replay-entries <session-id-or-name> --limit 20
 npx tsx caido-client.ts replay-entries <session-id-or-name> --raw --compact
-npx tsx caido-client.ts edit-session <session-id-or-name> --body '{"test":true}' --compact
+npx tsx caido-client.ts edit-session <session-id-or-name> --body '{"test":true}' --nonach --compact
 ```
 
 `session-entries` is accepted as an alias for `replay-entries`.
 
 ### Raw Replay (through Caido — creates a named session)
 
-`send-raw` and `replay` create a replay session, so `--name` is required. For ephemeral testing prefer the raw-socket workflow above; use these when you want the request in Caido's UI.
+`send-raw` and `replay` create a replay session, so `--name` is required. For ephemeral testing prefer the curl-through-Caido workflow above; use these when you want the request to land in Caido's Replay UI for handoff.
 
 ```bash
 npx tsx caido-client.ts send-raw --host example.com --raw @request.txt --name "G /"
@@ -272,7 +272,7 @@ npx tsx caido-client.ts intercept-disable
 | `--max-body-chars <n>` | 5000 | Max response body chars (0 = unlimited) |
 | `--no-request` | off | Skip request raw in output |
 | `--headers-only` | off | Show only HTTP headers, no body |
-| `--compact` | off | Shorthand for `--no-request --max-body 50` |
+| `--compact` | off | Shorthand for `--no-request --max-body 50 --max-body-chars 5000` |
 
 ## HTTPQL Quick Reference
 

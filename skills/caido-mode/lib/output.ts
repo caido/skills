@@ -61,7 +61,21 @@ export function truncateBody(decoded: string, maxLines: number, maxChars: number
   return headers + separator + body;
 }
 
-/** Build a curl command from raw HTTP request */
+/** Single-quote a value for safe pasting into a POSIX shell. */
+export function shQuote(s: string): string {
+  return `'${s.replace(/'/g, "'\\''")}'`;
+}
+
+/** Bracket an IPv6 literal host for use in a URL. */
+function urlHost(host: string): string {
+  return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+}
+
+/**
+ * Build a curl command from a raw HTTP request.
+ * Every interpolated, request-derived value (URL, method, header name/value, body)
+ * is shell-quoted — these come from proxied traffic and the output is pasted into a shell.
+ */
 export function rawToCurl(rawRequest: string, host: string, port: number, isTls: boolean): string {
   const lines = rawRequest.split(/\r?\n/);
   if (lines.length === 0) return "";
@@ -69,9 +83,9 @@ export function rawToCurl(rawRequest: string, host: string, port: number, isTls:
   const [method, path] = lines[0].split(" ");
   const scheme = isTls ? "https" : "http";
   const portSuffix = (isTls && port === 443) || (!isTls && port === 80) ? "" : `:${port}`;
-  const url = `${scheme}://${host}${portSuffix}${path}`;
+  const url = `${scheme}://${urlHost(host)}${portSuffix}${path ?? ""}`;
 
-  const parts = [`curl -X ${method} '${url}'`];
+  const parts = [`curl -X ${shQuote(method ?? "GET")} ${shQuote(url)}`];
 
   let i = 1;
   for (; i < lines.length; i++) {
@@ -83,13 +97,13 @@ export function rawToCurl(rawRequest: string, host: string, port: number, isTls:
       const value = line.substring(colonIdx + 1).trim();
       if (name.toLowerCase() === "host") continue;
       if (name.toLowerCase() === "content-length") continue;
-      parts.push(`  -H '${name}: ${value}'`);
+      parts.push(`  -H ${shQuote(`${name}: ${value}`)}`);
     }
   }
 
   const body = lines.slice(i + 1).join("\n").trim();
   if (body) {
-    parts.push(`  -d '${body.replace(/'/g, "'\\''")}'`);
+    parts.push(`  -d ${shQuote(body)}`);
   }
 
   return parts.join(" \\\n");

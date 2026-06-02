@@ -112,11 +112,22 @@ function applyRawEdits(raw: string, edits: RawEdits): string {
     if (from && to !== undefined) raw = raw.replaceAll(from, to);
   }
 
-  const lineEnd = raw.includes("\r\n") ? "\r\n" : "\n";
-  const separator = lineEnd + lineEnd;
-  const parts = raw.split(separator);
-  const headerBlock = parts[0];
-  let bodyPart = parts.slice(1).join(separator);
+  // Header/body boundary = the FIRST blank line (CRLF or LF, whichever comes first),
+  // and the line ending is derived from the header block — never from body content,
+  // so a body that contains \r\n\r\n (e.g. multipart) can't be mistaken for the split.
+  const idxCrlf = raw.indexOf("\r\n\r\n");
+  const idxLf = raw.indexOf("\n\n");
+  let headerBlock: string;
+  let bodyPart: string;
+  let lineEnd: string;
+  let hasBody: boolean;
+  if (idxCrlf >= 0 && (idxLf < 0 || idxCrlf <= idxLf)) {
+    headerBlock = raw.slice(0, idxCrlf); bodyPart = raw.slice(idxCrlf + 4); lineEnd = "\r\n"; hasBody = true;
+  } else if (idxLf >= 0) {
+    headerBlock = raw.slice(0, idxLf); bodyPart = raw.slice(idxLf + 2); lineEnd = "\n"; hasBody = true;
+  } else {
+    headerBlock = raw; bodyPart = ""; lineEnd = raw.includes("\r\n") ? "\r\n" : "\n"; hasBody = false;
+  }
 
   const headerLines = headerBlock.split(lineEnd);
   let requestLine = headerLines[0];
@@ -153,9 +164,13 @@ function applyRawEdits(raw: string, edits: RawEdits): string {
     const clBytes = new TextEncoder().encode(bodyPart).length;
     headers = headers.filter(h => !h.toLowerCase().startsWith("content-length:"));
     headers.push(`Content-Length: ${clBytes}`);
+    hasBody = true;
   }
 
-  return [requestLine, ...headers].join(lineEnd) + separator + bodyPart;
+  const head = [requestLine, ...headers].join(lineEnd);
+  // Only re-attach a body section if the request actually had one (or one was set);
+  // don't graft a spurious blank line + empty body onto a body-less request.
+  return hasBody ? head + lineEnd + lineEnd + bodyPart : head;
 }
 
 async function resolveSession(client: any, idOrName: string) {
