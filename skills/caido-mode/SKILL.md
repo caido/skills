@@ -58,6 +58,18 @@ curl -K /tmp/caido/target.com/auth.cfg -X POST "$BASE/api/profile" \
 Iterate step 3 freely — it's cheap, it's all in Caido, and the big auth blob stays in the file.
 Confirm a probe landed in Caido with `search 'req.host.cont:"target.com"' --recent --compact`.
 
+### Send the path exactly as written
+
+When testing **path traversal / path-normalization** (`../`, `/..`, `/./`, encoded variants), pass
+**`curl --path-as-is`** — otherwise curl collapses `../` and `/./` *client-side* before sending, so
+the server never sees the payload and the test silently passes. Keep the path verbatim:
+
+```bash
+curl --path-as-is -K /tmp/caido/target.com/auth.cfg "$BASE/api/../../../etc/passwd"
+```
+
+(Likewise add `-g`/`--globoff` if the URL contains `[ ] { }` you don't want curl to interpret.)
+
 ### Token-saving conventions
 
 - **Per-target scratch dir:** `/tmp/caido/<host>/` holds `auth.cfg`, `cookies.txt`, body files,
