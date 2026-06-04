@@ -176,12 +176,12 @@ Usage:
     --collection <name|id>     Add session to this collection (must exist)
   rename-session <name|id> <n> Rename a replay session
   move-session <s> <coll>      Move a session to a collection (by name or id)
-  sessions | replay-sessions   List replay sessions
-    --limit <n>                Max results (default: 20)
+  sessions | replay-sessions   List replay sessions (all, paginated)
+    --limit <n>                Cap the number returned
   delete-sessions <id,id,...>  Delete replay sessions
 
-  collections | replay-collections   List replay collections
-    --limit <n>                Max results (default: 20)
+  collections | replay-collections   List replay collections (all, paginated)
+    --limit <n>                Cap the number returned
   create-collection <name>     Create a replay collection (name mandatory)
   rename-collection <c> <n>    Rename a collection (by name or id)
   delete-collection <name|id>  Delete a replay collection
@@ -545,7 +545,7 @@ async function main() {
 
     case "sessions":
     case "replay-sessions": {
-      let limit = 20;
+      let limit: number | undefined;   // default: paginate all
       for (let i = 1; i < args.length; i++) {
         if (args[i] === "--limit" && args[i + 1]) { limit = parseInt(args[i + 1], 10); i++; }
       }
@@ -562,7 +562,7 @@ async function main() {
     // ── Replay Collections ──
     case "collections":
     case "replay-collections": {
-      let limit = 20;
+      let limit: number | undefined;   // default: paginate all
       for (let i = 1; i < args.length; i++) {
         if (args[i] === "--limit" && args[i + 1]) { limit = parseInt(args[i + 1], 10); i++; }
       }

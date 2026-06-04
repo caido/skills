@@ -182,7 +182,7 @@ async function resolveSession(client: any, idOrName: string) {
   let after: string | undefined;
   while (true) {
     const page = after
-      ? await client.replay.sessions.list().after(after, 100)
+      ? await client.replay.sessions.list().after(after).first(100)
       : await client.replay.sessions.list().first(100);
 
     for (const edge of page.edges) {
@@ -206,7 +206,7 @@ async function resolveCollectionId(client: any, idOrName: string): Promise<strin
   let after: string | undefined;
   while (true) {
     const page = after
-      ? await client.replay.collections.list().after(after, 100)
+      ? await client.replay.collections.list().after(after).first(100)
       : await client.replay.collections.list().first(100);
 
     for (const edge of page.edges) {
@@ -557,18 +557,33 @@ function formatReplayEntry(entry: any, opts: OutputOpts, includeRaw: boolean) {
 
 // -- Sessions --
 
-export async function cmdReplaySessions(limit: number) {
+export async function cmdReplaySessions(limit?: number) {
   const client = await getClient();
-  const connection = await client.replay.sessions.list().first(limit);
+  // Sessions can't be sorted (SDK exposes no order field), so a single page can hide
+  // recently-created sessions on later pages. Paginate fully (capped) by default.
+  const cap = limit && limit > 0 ? limit : 2000;
+  const results: any[] = [];
+  let after: string | undefined;
+  let truncated = false;
+  while (results.length < cap) {
+    const want = Math.min(100, cap - results.length);
+    const page = after
+      ? await client.replay.sessions.list().after(after).first(want)
+      : await client.replay.sessions.list().first(want);
+    for (const e of page.edges) {
+      results.push({
+        id: e.node.id,
+        name: e.node.name,
+        collectionId: e.node.collectionId,
+        activeEntryId: e.node.activeEntryId,
+      });
+    }
+    if (!page.pageInfo.hasNextPage) break;
+    if (results.length >= cap) { truncated = true; break; }
+    after = page.pageInfo.endCursor;
+  }
 
-  const results = connection.edges.map(e => ({
-    id: e.node.id,
-    name: e.node.name,
-    collectionId: e.node.collectionId,
-    activeEntryId: e.node.activeEntryId,
-  }));
-
-  console.log(JSON.stringify({ results, count: results.length }, null, 2));
+  console.log(JSON.stringify({ results, count: results.length, ...(truncated ? { truncated: true } : {}) }, null, 2));
 }
 
 export async function cmdCreateSession(requestId: string, name: string, collectionRef?: string) {
@@ -622,16 +637,26 @@ export async function cmdDeleteSessions(ids: string[]) {
 
 // -- Collections --
 
-export async function cmdReplayCollections(limit: number) {
+export async function cmdReplayCollections(limit?: number) {
   const client = await getClient();
-  const connection = await client.replay.collections.list().first(limit);
+  const cap = limit && limit > 0 ? limit : 2000;
+  const results: any[] = [];
+  let after: string | undefined;
+  let truncated = false;
+  while (results.length < cap) {
+    const want = Math.min(100, cap - results.length);
+    const page = after
+      ? await client.replay.collections.list().after(after).first(want)
+      : await client.replay.collections.list().first(want);
+    for (const e of page.edges) {
+      results.push({ id: e.node.id, name: e.node.name });
+    }
+    if (!page.pageInfo.hasNextPage) break;
+    if (results.length >= cap) { truncated = true; break; }
+    after = page.pageInfo.endCursor;
+  }
 
-  const results = connection.edges.map(e => ({
-    id: e.node.id,
-    name: e.node.name,
-  }));
-
-  console.log(JSON.stringify({ results, count: results.length }, null, 2));
+  console.log(JSON.stringify({ results, count: results.length, ...(truncated ? { truncated: true } : {}) }, null, 2));
 }
 
 export async function cmdCreateCollection(name: string) {

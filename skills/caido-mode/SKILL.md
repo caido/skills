@@ -102,6 +102,10 @@ npx tsx caido-client.ts auth-status     # prints "proxy": "http://localhost:8080
 `-x <proxy> -k` yourself. Override the proxy only if its listener differs from the API URL —
 `setup --proxy <addr>` or `export CAIDO_PROXY=<addr>`.
 
+> Get the proxy from `auth-status` (the `proxy`/`activeUrl` fields) — **don't parse `secrets.json`
+> directly.** Auth is URL-keyed now: the address lives under `.caido.default` / `.caido.instances`,
+> not `.caido.url`.
+
 ---
 
 ## Authentication setup
@@ -415,6 +419,17 @@ lib/
 7. **Editing a session requires `--nonach` or `--new-name`.**
 8. **Create findings** for anything real.
 9. **NEVER use `NOT` in HTTPQL** — use `ne`/`ncont`/`nlike`/`nregex`.
+
+## Operational notes (shell gotchas)
+
+- **Don't batch CLI calls inside `while`/`for` loops.** Some shells strip `PATH` inside loop
+  subshells, so `head`/`python3`/etc. become "command not found" and the loop body fails silently
+  (sessions look like they weren't created). Run each `send-raw`/`create-session` as an individual
+  top-level command, or as a standalone `bash` script with an explicit `export PATH=…`.
+- **`search --ids-only` returns a JSON array** (`["123"]`), not a bare id — unwrap before reuse,
+  e.g. `ID=$(… --ids-only | jq -r '.[0]')`.
+- **`sessions` / `collections` now list everything** (paginated, not just the first page), so
+  freshly-created items always appear. `--limit N` caps the count if you want a short list.
 
 ## Error handling
 
