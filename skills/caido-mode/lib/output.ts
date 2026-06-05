@@ -2,8 +2,20 @@
 
 import type { OutputOpts } from "./types";
 
-export function decodeRaw(raw: Uint8Array | undefined): string {
-  if (!raw || raw.length === 0) return "";
+export function decodeRaw(raw: string | Uint8Array | undefined): string {
+  if (!raw || (typeof raw === "string" && raw.length === 0) || (raw instanceof Uint8Array && raw.length === 0)) return "";
+  
+  // If raw is a base64 string, decode it first
+  if (typeof raw === "string") {
+    try {
+      return Buffer.from(raw, "base64").toString("utf-8");
+    } catch {
+      // If not valid base64, return as-is (might already be decoded)
+      return raw;
+    }
+  }
+  
+  // Uint8Array path
   return new TextDecoder().decode(raw);
 }
 

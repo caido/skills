@@ -11,11 +11,12 @@ import { parseOutputOpts, DEFAULT_OUTPUT_OPTS } from "./lib/types";
 import { cmdSearch, cmdRecent, cmdGet, cmdGetResponse, cmdExportCurl } from "./lib/commands/requests";
 import { cmdReplay, cmdSendRaw, cmdEdit, cmdGetSession, cmdReplayEntries, cmdEditSession, cmdReplaySessions, cmdCreateSession, cmdRenameSession, cmdMoveSession, cmdDeleteSessions, cmdReplayCollections, cmdCreateCollection, cmdRenameCollection, cmdDeleteCollection } from "./lib/commands/replay";
 import type { ConnectionOverrides } from "./lib/commands/replay";
-import { cmdCreateAutomateSession, cmdFuzz, cmdRenameAutomateSession, cmdSetPlaceholder, cmdSetPayload, cmdAutomateResults, cmdAutomateSessions, cmdAutomateTasks, cmdDeleteAutomateSession, cmdDuplicateAutomateSession, cmdPauseAutomateTask, cmdResumeAutomateTask, cmdCancelAutomateTask, cmdRenameAutomateEntry, cmdDeleteAutomateEntries, cmdEditAutomateBody } from "./lib/commands/automate";
+import { cmdCreateAutomateSession, cmdFuzz, cmdSetPlaceholder, cmdSetPayload, cmdAutomateResults, cmdAutomateSessions, cmdAutomateTasks, cmdDeleteAutomateSession, cmdDuplicateAutomateSession, cmdPauseAutomateTask, cmdResumeAutomateTask, cmdCancelAutomateTask, cmdRenameAutomateEntry, cmdDeleteAutomateEntries, cmdEditAutomateSession } from "./lib/commands/automate";
 import { cmdFindings, cmdGetFinding, cmdCreateFinding, cmdUpdateFinding } from "./lib/commands/findings";
 import { cmdScopes, cmdCreateScope, cmdUpdateScope, cmdDeleteScope, cmdFilters, cmdCreateFilter, cmdUpdateFilter, cmdDeleteFilter, cmdEnvs, cmdCreateEnv, cmdSelectEnv, cmdEnvSet, cmdDeleteEnv, cmdProjects, cmdSelectProject, cmdHostedFiles, cmdDeleteHostedFile, cmdTasks, cmdCancelTask } from "./lib/commands/management";
 import { cmdInterceptStatus, cmdInterceptSet } from "./lib/commands/intercept";
 import { cmdViewer, cmdPlugins, cmdHealth, cmdSetup, cmdAuthStatus } from "./lib/commands/info";
+import { cmdIdorChain, cmdFuzzAutomate, cmdBulkReplay, cmdDiscoverAuth } from "./lib/commands/composite";
 
 const DEBUG = process.env.DEBUG === "1";
 
@@ -147,25 +148,47 @@ Usage:
 ═══════════════════════════════════════════════
 
   create-automate-session <id> Create an automate session for fuzzing
-  automate-sessions            List all automate sessions
-    --limit <n>                Max results (default: 20)
-  rename-automate-session <id> <name>
-                               Rename an automate session
-  delete-automate-session <id> Delete an automate session
-  duplicate-automate-session <id>
-                               Clone an existing automate session
-  set-placeholder <session-id>  Set injection points (placeholders)
-    --start <n> --end <n>      Byte offsets in the raw request
-    --search <string>          Search for string, placeholder covers the string
-    --length <n>               Legacy: bytes to cover after the search string
-    --show-raw                 Display raw request content
+    --name <str>               Session name
+    --strategy <ALL|SEQUENTIAL|PARALLEL|MATRIX>
+                               Fuzzing strategy (default: ALL)
+    --strategy-options <json>  Advanced: {"workers":5,"delay":100,"redirectStrategy":"NEVER"}
+  edit-automate-session <id>   Edit session (unified)
+    --name <str>               Rename session
+    --strategy <ALL|SEQUENTIAL|PARALLEL|MATRIX>
+    --strategy-options <json>  Advanced: {"workers":5,"delay":100}
+    --replace <from>:::<to>    Find/replace in raw request (repeatable)
+    --set-header <N:V>         Set/replace header (repeatable)
+    --remove-header <name>     Remove header (repeatable)
+    --body <raw-body>          Full body replacement
+    --method <METHOD>          Change HTTP method
+    --path <path>              Change request path
+  set-placeholder <session-id> Set injection points (modes)
+    search <pattern>           Find all occurrences, create placeholders
+      --count <n>              Limit to first N matches
+    range <start> <end>        Single placeholder at byte range
+    list <start:end>...        Multiple explicit placeholders
+    clear                      Remove all placeholders
+    remove <index>             Remove placeholder at index
+    replace <index> <start> <end>
+                               Replace placeholder at index
+    show-raw                   Display raw request with byte offsets
   set-payload <session-id>     Set payload list
-    --list "a,b,c"             Comma-separated payload values
+    --list "a,b,c"             Comma-separated (single set, backward compat)
+    --json @file               Full config from JSON file
+    --index <n> --list "a,b,c" Set payload at index
+    --index <n> --range "min-max[:step]"
+                               Number range payload at index
+    --index <n> --remove       Remove payload set at index
   fuzz <session-id>            Start fuzzing (must have placeholders + payloads)
   automate-results <session-id>
                                Get all fuzzing results (request/response pairs)
+  automate-sessions            List all automate sessions
+    --limit <n>                Max results (default: 20)
   automate-tasks               List automate tasks
     --limit <n>                Max results (default: 20)
+  delete-automate-session <id> Delete an automate session
+  duplicate-automate-session <id>
+                               Clone an existing automate session
   pause-task <id>              Pause a running automate task
   resume-task <id>             Resume a paused automate task
   cancel-task-automate <id>    Cancel a running automate task
@@ -173,9 +196,6 @@ Usage:
                                Rename an automate entry
   delete-automate-entries <ids>
                                Delete automate entries (comma-separated)
-  edit-automate-body <session-id>
-                               Find/replace in the raw request body
-    --replace <from>:::<to>    Replace text (repeatable)
 
 ═══════════════════════════════════════════════
  FINDINGS
@@ -271,6 +291,35 @@ Usage:
   health                       Check Caido instance health
 
 ═══════════════════════════════════════════════
+ COMPOSITE COMMANDS
+═══════════════════════════════════════════════
+
+  idor-chain <base-request-id>   Test IDOR against multiple target IDs
+    --ids <list>                 Comma-separated target IDs (required)
+    --create-findings            Create findings for successful IDORs
+    --finding-title-prefix <str> Title prefix for findings (default: "IDOR on")
+    --dedupe-key-prefix <str>    Dedupe key prefix (default: "idor")
+    --max-concurrent <n>         Max concurrent requests (default: 3)
+
+  fuzz-automate <request-id>     Full 7-step fuzzing pipeline in one command
+    --payloads <list>            Comma-separated payloads (required)
+    --strategy <ALL|SEQUENTIAL|PARALLEL|MATRIX> (default: MATRIX)
+    --workers <n>                Concurrent workers (default: 5)
+    --delay <ms>                 Delay between requests (default: 100)
+    --redirect-strategy <NEVER|IN_SCOPE|SAME_SITE|ALWAYS> (default: NEVER)
+    --follow-redirects           Follow redirects during fuzzing
+
+  bulk-replay                    Replay multiple requests through proxy
+    --filter <httpql>            HTTPQL filter to select requests
+    --collection <id>            Replay collection ID
+    --rate <n>                   Requests per second (default: 10)
+    --max <n>                    Max requests to replay (default: 100)
+
+  discover-auth <base-id> <pattern>  Discover endpoints & test IDOR on each
+    --ids <list>                 Target IDs for IDOR (required)
+    --create-findings            Create findings for successful IDORs
+
+═══════════════════════════════════════════════
  OUTPUT CONTROL (works with get, get-response, replay, edit, send-raw)
 ═══════════════════════════════════════════════
 
@@ -302,6 +351,10 @@ Examples:
   npx tsx caido-client.ts create-scope "Target" --allow "*.example.com"
   npx tsx caido-client.ts replay-sessions --limit 10
   npx tsx caido-client.ts health
+  npx tsx caido-client.ts idor-chain 12345 --ids "100,101,102" --create-findings
+  npx tsx caido-client.ts fuzz-automate 12345 --payloads '\${jndi:ldap://...},\${jndi:rmi://...}' --strategy MATRIX
+  npx tsx caido-client.ts bulk-replay --filter 'req.path.cont:"/api/"' --rate 5
+  npx tsx caido-client.ts discover-auth 12345 'req.path.cont:"/api/user"' --ids "1,2,3"
 `);
 }
 
@@ -531,7 +584,40 @@ async function main() {
     // ── Automate & Fuzzing ──
     case "create-automate-session": {
       if (!args[1]) { console.error("Error: request-id required"); process.exit(1); }
-      await cmdCreateAutomateSession(args[1]);
+      let caName: string | undefined, caStrategy: string | undefined, caStrategyOptions: string | undefined;
+      for (let i = 2; i < args.length; i++) {
+        if (args[i] === "--name" && args[i + 1]) { caName = args[i + 1]; i++; }
+        else if (args[i] === "--strategy" && args[i + 1]) { caStrategy = args[i + 1]; i++; }
+        else if (args[i] === "--strategy-options" && args[i + 1]) { caStrategyOptions = args[i + 1]; i++; }
+      }
+      await cmdCreateAutomateSession(args[1], caName, caStrategy, caStrategyOptions);
+      break;
+    }
+
+    case "edit-automate-session": {
+      if (!args[1]) { console.error("Error: session-id required"); process.exit(1); }
+      const editOpts: any = {};
+      for (let i = 2; i < args.length; i++) {
+        if (args[i] === "--name" && args[i + 1]) { editOpts.name = args[i + 1]; i++; }
+        else if (args[i] === "--strategy" && args[i + 1]) { editOpts.strategy = args[i + 1]; i++; }
+        else if (args[i] === "--strategy-options" && args[i + 1]) { editOpts.strategyOptions = args[i + 1]; i++; }
+        else if (args[i] === "--replace" && args[i + 1]) {
+          if (!editOpts.replacements) editOpts.replacements = [];
+          editOpts.replacements.push(args[i + 1]); i++;
+        }
+        else if (args[i] === "--set-header" && args[i + 1]) {
+          if (!editOpts.setHeaders) editOpts.setHeaders = [];
+          editOpts.setHeaders.push(args[i + 1]); i++;
+        }
+        else if (args[i] === "--remove-header" && args[i + 1]) {
+          if (!editOpts.removeHeaders) editOpts.removeHeaders = [];
+          editOpts.removeHeaders.push(args[i + 1]); i++;
+        }
+        else if (args[i] === "--body" && args[i + 1]) { editOpts.body = args[i + 1]; i++; }
+        else if (args[i] === "--method" && args[i + 1]) { editOpts.method = args[i + 1]; i++; }
+        else if (args[i] === "--path" && args[i + 1]) { editOpts.path = args[i + 1]; i++; }
+      }
+      await cmdEditAutomateSession(args[1], editOpts);
       break;
     }
 
@@ -549,47 +635,31 @@ async function main() {
 
     case "set-placeholder": {
       if (!args[1]) { console.error("Error: session-id required"); process.exit(1); }
-
-      const explicitPlaceholders: { start: number; end: number }[] = [];
-      let searchStr: string | undefined;
-      let searchLength: number | undefined;
-      let showRaw = false;
-
-      for (let i = 2; i < args.length; i++) {
-        if (args[i] === "--start" && args[i + 1] && args[i + 2] === "--end" && args[i + 3]) {
-          explicitPlaceholders.push({ start: parseInt(args[i + 1], 10), end: parseInt(args[i + 3], 10) });
-          i += 3;
-        } else if (args[i] === "--search" && args[i + 1]) {
-          searchStr = args[i + 1];
-          i++;
-        } else if (args[i] === "--length" && args[i + 1]) {
-          searchLength = parseInt(args[i + 1], 10);
-          i++;
-        } else if (args[i] === "--show-raw") {
-          showRaw = true;
-        }
-      }
-
-      if (explicitPlaceholders.length === 0 && !searchStr && !showRaw) {
-        console.error("Error: provide --start <n> --end <n> or --search <string>");
+      const mode = args[2] as string;
+      if (!mode || !["search", "range", "list", "clear", "remove", "replace", "show-raw"].includes(mode)) {
+        console.error("Error: mode required (search|range|list|clear|remove|replace|show-raw)");
+        console.error("Usage: set-placeholder <session-id> <mode> [args...]");
         process.exit(1);
       }
-
-      await cmdSetPlaceholder(args[1], explicitPlaceholders, showRaw, searchStr, searchLength);
+      const spArgs = args.slice(3);
+      await cmdSetPlaceholder(args[1], mode as any, spArgs);
       break;
     }
 
     case "set-payload": {
       if (!args[1]) { console.error("Error: session-id required"); process.exit(1); }
-      let list: string[] = [];
+      const payloadOpts: any = {};
       for (let i = 2; i < args.length; i++) {
         if (args[i] === "--list" && args[i + 1]) {
-          list = args[i + 1].split(",").map(s => s.trim());
+          payloadOpts.list = args[i + 1].split(",").map(s => s.trim());
           i++;
         }
+        else if (args[i] === "--json" && args[i + 1]) { payloadOpts.json = args[i + 1]; i++; }
+        else if (args[i] === "--index" && args[i + 1]) { payloadOpts.index = parseInt(args[i + 1], 10); i++; }
+        else if (args[i] === "--range" && args[i + 1]) { payloadOpts.range = args[i + 1]; i++; }
+        else if (args[i] === "--remove") { payloadOpts.remove = true; }
       }
-      if (list.length === 0) { console.error("Error: --list required (comma-separated)"); process.exit(1); }
-      await cmdSetPayload(args[1], list);
+      await cmdSetPayload(args[1], payloadOpts);
       break;
     }
 
@@ -840,6 +910,80 @@ async function main() {
       break;
     }
     case "auth-status": { await cmdAuthStatus(); break; }
+
+    // ── Composite Commands ──
+    case "idor-chain": {
+      if (!args[1] || !args[2]) { console.error("Error: idor-chain requires <base-request-id> --ids <comma-separated-ids>"); process.exit(1); }
+      const baseRequestId = args[1];
+      let idsStr: string | undefined;
+      let createFindings = false;
+      let findingTitlePrefix = "IDOR on";
+      let dedupeKeyPrefix = "idor";
+      let maxConcurrent = 3;
+      for (let i = 2; i < args.length; i++) {
+        if (args[i] === "--ids" && args[i + 1]) { idsStr = args[i + 1]; i++; }
+        else if (args[i] === "--create-findings") { createFindings = true; }
+        else if (args[i] === "--finding-title-prefix" && args[i + 1]) { findingTitlePrefix = args[i + 1]; i++; }
+        else if (args[i] === "--dedupe-key-prefix" && args[i + 1]) { dedupeKeyPrefix = args[i + 1]; i++; }
+        else if (args[i] === "--max-concurrent" && args[i + 1]) { maxConcurrent = parseInt(args[i + 1], 10); i++; }
+      }
+      if (!idsStr) { console.error("Error: --ids required (comma-separated target IDs)"); process.exit(1); }
+      await cmdIdorChain(baseRequestId, idsStr.split(",").map(s => s.trim()), { createFindings, findingTitlePrefix, dedupeKeyPrefix, maxConcurrent });
+      break;
+    }
+
+    case "fuzz-automate": {
+      if (!args[1] || !args[2]) { console.error("Error: fuzz-automate requires <request-id> --payloads <comma-separated-payloads>"); process.exit(1); }
+      const requestId = args[1];
+      let payloadsStr: string | undefined;
+      let strategy: "ALL" | "SEQUENTIAL" | "PARALLEL" | "MATRIX" = "MATRIX";
+      let workers = 5;
+      let delay = 100;
+      let redirectStrategy: "NEVER" | "IN_SCOPE" | "SAME_SITE" | "ALWAYS" = "NEVER";
+      let followRedirects = false;
+      for (let i = 2; i < args.length; i++) {
+        if (args[i] === "--payloads" && args[i + 1]) { payloadsStr = args[i + 1]; i++; }
+        else if (args[i] === "--strategy" && args[i + 1]) { strategy = args[i + 1] as any; i++; }
+        else if (args[i] === "--workers" && args[i + 1]) { workers = parseInt(args[i + 1], 10); i++; }
+        else if (args[i] === "--delay" && args[i + 1]) { delay = parseInt(args[i + 1], 10); i++; }
+        else if (args[i] === "--redirect-strategy" && args[i + 1]) { redirectStrategy = args[i + 1] as any; i++; }
+        else if (args[i] === "--follow-redirects") { followRedirects = true; }
+      }
+      if (!payloadsStr) { console.error("Error: --payloads required (comma-separated)"); process.exit(1); }
+      await cmdFuzzAutomate(requestId, payloadsStr.split(",").map(s => s.trim()), { strategy, workers, delay, redirectStrategy, followRedirects });
+      break;
+    }
+
+    case "bulk-replay": {
+      let filter: string | undefined;
+      let collectionId: string | undefined;
+      let rateLimit = 10;
+      let maxRequests = 100;
+      for (let i = 1; i < args.length; i++) {
+        if (args[i] === "--filter" && args[i + 1]) { filter = args[i + 1]; i++; }
+        else if (args[i] === "--collection" && args[i + 1]) { collectionId = args[i + 1]; i++; }
+        else if (args[i] === "--rate" && args[i + 1]) { rateLimit = parseInt(args[i + 1], 10); i++; }
+        else if (args[i] === "--max" && args[i + 1]) { maxRequests = parseInt(args[i + 1], 10); i++; }
+      }
+      if (!filter && !collectionId) { console.error("Error: --filter or --collection required"); process.exit(1); }
+      await cmdBulkReplay({ filter, collectionId, rateLimit, maxRequests });
+      break;
+    }
+
+    case "discover-auth": {
+      if (!args[1] || !args[2] || !args[3]) { console.error("Error: discover-auth requires <base-request-id> <search-pattern> --ids <comma-separated-ids>"); process.exit(1); }
+      const baseRequestId = args[1];
+      const searchPattern = args[2];
+      let idsStr: string | undefined;
+      let createFindings = false;
+      for (let i = 3; i < args.length; i++) {
+        if (args[i] === "--ids" && args[i + 1]) { idsStr = args[i + 1]; i++; }
+        else if (args[i] === "--create-findings") { createFindings = true; }
+      }
+      if (!idsStr) { console.error("Error: --ids required"); process.exit(1); }
+      await cmdDiscoverAuth(baseRequestId, searchPattern, idsStr.split(",").map(s => s.trim()), { createFindings });
+      break;
+    }
 
     default:
       console.error(`Unknown command: ${command}`);
