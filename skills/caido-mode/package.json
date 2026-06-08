@@ -1,6 +1,6 @@
 {
   "name": "caido-mode",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "Full Caido SDK CLI for Claude Code - search, replay, edit requests, manage findings, scopes, filters, and more",
   "type": "module",
   "scripts": {
