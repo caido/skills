@@ -23,8 +23,12 @@ There are **two distinct modes**:
 
 Hard rules:
 
-- **Everything goes through Caido.** Never curl a target directly — always via the Caido proxy
-  (the generated config does this for you; otherwise add `-x <proxy>`).
+- **Everything goes through Caido — except high-volume bruteforce/fuzzing.** Never curl a single
+  target request directly; always via the Caido proxy (the generated config does this; otherwise add
+  `-x <proxy>`). **The one exception:** don't proxy bruteforce/fuzzing tools (`ffuf`, etc.) or any
+  batch of **100+ requests at once** through Caido — it bloats HTTP history. Run those **direct** (no
+  `-x`), then bring any interesting hit *back* into Caido (re-send it through the proxy / promote to
+  Replay) to investigate and hand off.
 - **Test with `curl`.** Don't spin up replay sessions for probing — that's handoff only.
 - **To show the operator a request, send it to Replay.** Whenever you want the operator to *see* a
   specific request, create a **named replay session** for it (in a named collection if there's more
@@ -428,8 +432,9 @@ lib/
 
 ## Instructions for Claude (checklist)
 
-1. **Test with `curl`, always through Caido.** Never hit a target directly — the proxy must be in
-   the path (the generated config does this; otherwise `-x <proxy>`).
+1. **Test with `curl`, always through Caido** — the proxy must be in the path (config does this;
+   otherwise `-x <proxy>`). **Exception:** bruteforce/fuzzing (`ffuf`) or 100+ requests at once go
+   **direct** to avoid bloating HTTP history; bring interesting hits back into Caido.
 2. **Cache auth once:** `export-curl <id> --config` → `/tmp/caido/<host>/auth.cfg` + cookie jar.
    Test with `curl -K auth.cfg "$BASE/path"`. Don't re-paste cookies/JWTs.
 3. **Refresh lazily** — only on 401/403/login-redirect, regenerate the config from a fresh request.
