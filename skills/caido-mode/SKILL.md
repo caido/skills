@@ -26,10 +26,16 @@ Hard rules:
 - **Everything goes through Caido.** Never curl a target directly — always via the Caido proxy
   (the generated config does this for you; otherwise add `-x <proxy>`).
 - **Test with `curl`.** Don't spin up replay sessions for probing — that's handoff only.
+- **To show the operator a request, send it to Replay.** Whenever you want the operator to *see* a
+  specific request, create a **named replay session** for it (in a named collection if there's more
+  than one) — that's how they inspect and re-run it in Caido. A request you tested via curl only
+  becomes something the operator can work with once you promote it into Replay
+  (`create-session <id> --name …`, or `send-raw … --name …` for a crafted one).
 - **Cache auth in files, don't re-paste it.** Use `export-curl --config` once per target; then
   reference the config. Don't dump cookies/JWTs into every command (or repeatedly into context).
-- **Give the user FULL self-contained curl commands** (all headers inline, via `export-curl`).
-  Use the `-K` config file **only for your own internal testing** — the user doesn't have it.
+- **If you hand the operator a runnable command, make it a FULL self-contained curl** (all headers
+  inline, via `export-curl`) — for a PoC or something they'll run outside Caido. The `-K` config is
+  for your internal testing only; never hand them a `curl -K /tmp/…` line.
 - **Replay session names are mandatory**, and editing a session forces explicit name intent.
 - **Use collections for multi-request handoffs**; refer to sessions/collections by **name, not ID**.
 
@@ -88,8 +94,10 @@ curl --path-as-is -K /tmp/caido/target.com/auth.cfg "$BASE/api/../../../etc/pass
 
 ### Giving commands to the user
 
-When you hand the user a reproduction, **always produce a full, self-contained curl** — every
-header inline, no `-K`:
+To surface a request *inside Caido* for the operator, send it to **Replay** (see "Replay sessions"
+below) — that's the default. This section is for the other case: handing them a runnable **command**
+(a PoC, or something to run outside Caido). Then **always produce a full, self-contained curl** —
+every header inline, no `-K`:
 
 ```bash
 npx tsx caido-client.ts export-curl 8431      # full curl, all headers inline (portable PoC)
@@ -427,7 +435,8 @@ lib/
 3. **Refresh lazily** — only on 401/403/login-redirect, regenerate the config from a fresh request.
 4. **Give the user FULL self-contained curl** (`export-curl <id>`); never a `-K` line.
 5. **Browse with `--recent --compact`;** `get`/`export-curl` only the request you'll work from.
-6. **Replay sessions = handoff, names mandatory;** collections used heavily, referred to by NAME.
+6. **To show the operator a request, send it to Replay** (named session). Replay = handoff only,
+   names mandatory; collections used heavily, referred to by NAME.
 7. **Editing a session requires `--nonach` or `--new-name`.**
 8. **Create findings** for anything real.
 9. **NEVER use `NOT` in HTTPQL** — use `ne`/`ncont`/`nlike`/`nregex`.
