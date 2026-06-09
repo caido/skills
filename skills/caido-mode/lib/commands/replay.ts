@@ -279,6 +279,7 @@ async function createRawReplaySession(
   // A session built from scratch must never carry bare-LF header endings.
   raw = ensureHeaderCrlf(raw);
   const input: Record<string, any> = {
+    kind: "HTTP", // required since Caido 0.57 (ReplaySessionKind)
     requestSource: {
       raw: {
         connectionInfo: connection,
