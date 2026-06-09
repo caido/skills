@@ -11,6 +11,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildAuthConfig } from "../lib/commands/requests.ts";
+import { rawToCurl } from "../lib/output.ts";
+
+test("export-curl (full command): adds --compressed and drops Accept-Encoding, keeps real headers", () => {
+  const raw = "GET / HTTP/1.1\r\nHost: h\r\nAccept-Encoding: gzip, br, zstd\r\nAuthorization: tok\r\nConnection: keep-alive\r\n\r\n";
+  const curl = rawToCurl(raw, "h", 443, true);
+  assert.match(curl, /^curl --compressed /);
+  assert.doesNotMatch(curl, /Accept-Encoding/i);   // would otherwise return unreadable gzip
+  assert.doesNotMatch(curl, /Connection/i);          // hop-by-hop, curl-managed
+  assert.match(curl, /Authorization: tok/);          // real headers preserved
+});
 
 // A request shaped like a Gemini "batchexecute" RPC.
 const RAW = [

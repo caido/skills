@@ -72,9 +72,21 @@ function urlHost(host: string): string {
 }
 
 /**
+ * Headers curl sets/manages itself per request/connection — inlining a captured
+ * copy is at best redundant and at worst breaks things (stale Content-Length →
+ * hang/duplicate; inlined Accept-Encoding without --compressed → unreadable gzip).
+ * Single source of truth shared by rawToCurl and the curl-config builder.
+ */
+export const CURL_MANAGED_HEADERS = new Set([
+  "host", "content-length", "accept-encoding", "connection",
+  "transfer-encoding", "proxy-connection", "keep-alive", "upgrade", "te",
+]);
+
+/**
  * Build a curl command from a raw HTTP request.
  * Every interpolated, request-derived value (URL, method, header name/value, body)
  * is shell-quoted — these come from proxied traffic and the output is pasted into a shell.
+ * `--compressed` is added (and Accept-Encoding dropped) so responses are readable.
  */
 export function rawToCurl(rawRequest: string, host: string, port: number, isTls: boolean): string {
   const lines = rawRequest.split(/\r?\n/);
@@ -85,7 +97,7 @@ export function rawToCurl(rawRequest: string, host: string, port: number, isTls:
   const portSuffix = (isTls && port === 443) || (!isTls && port === 80) ? "" : `:${port}`;
   const url = `${scheme}://${urlHost(host)}${portSuffix}${path ?? ""}`;
 
-  const parts = [`curl -X ${shQuote(method ?? "GET")} ${shQuote(url)}`];
+  const parts = [`curl --compressed -X ${shQuote(method ?? "GET")} ${shQuote(url)}`];
 
   let i = 1;
   for (; i < lines.length; i++) {
@@ -95,8 +107,7 @@ export function rawToCurl(rawRequest: string, host: string, port: number, isTls:
     if (colonIdx > 0) {
       const name = line.substring(0, colonIdx).trim();
       const value = line.substring(colonIdx + 1).trim();
-      if (name.toLowerCase() === "host") continue;
-      if (name.toLowerCase() === "content-length") continue;
+      if (CURL_MANAGED_HEADERS.has(name.toLowerCase())) continue;
       parts.push(`  -H ${shQuote(`${name}: ${value}`)}`);
     }
   }

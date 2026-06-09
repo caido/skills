@@ -1,7 +1,7 @@
 /** HTTP History commands: search, recent, get, get-response, raw, export-curl */
 
 import { getClient, resolveProxy } from "../client";
-import { decodeRaw, formatHttpRaw, rawToCurl } from "../output";
+import { decodeRaw, formatHttpRaw, rawToCurl, CURL_MANAGED_HEADERS } from "../output";
 import type { OutputOpts } from "../types";
 
 /** Terse one-line-per-request rendering for fast, low-token browsing. */
@@ -217,11 +217,10 @@ interface AuthConfigResult {
  * curl-managed. Everything else is captured faithfully so app-specific auth
  * headers (X-CSRF, x-goog-ext-*, X-Client-Data, Origin, Referer, Sec-*, …) are
  * never silently dropped — an allowlist can't anticipate them.
+ * = the curl-managed set, plus Content-Type (per-request; the agent passes it on
+ * each POST/PUT — inlining it here would duplicate that header).
  */
-const SKIP_HEADERS = new Set([
-  "host", "content-length", "content-type", "connection", "accept-encoding",
-  "transfer-encoding", "proxy-connection", "keep-alive", "upgrade", "te",
-]);
+const SKIP_HEADERS = new Set([...CURL_MANAGED_HEADERS, "content-type"]);
 
 function parseRawHeaders(raw: string): Array<{ name: string; value: string }> {
   const sep = raw.indexOf("\r\n\r\n") >= 0 ? "\r\n\r\n" : "\n\n";
