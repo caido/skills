@@ -91,9 +91,14 @@ hard way:
 - **All headers, not an allowlist.** Modern apps gate authorization on app-specific headers you
   can't predict — `x-goog-ext-*`, `X-Browser-Validation`, `X-Client-Data`, `Origin`, `Referer`,
   `X-Same-Domain`, `Sec-*`, … A narrow allowlist silently drops these and you get opaque
-  `403`/`PERMISSION_DENIED`. The config now mirrors what actually authorized the request. (Only
+  `403`/`PERMISSION_DENIED`. The config now mirrors what actually authorized the request. Only
   truly per-request/volatile headers are dropped: `Host`, `Content-Length`, `Content-Type`,
-  `Connection`, `Accept-Encoding`.)
+  `Connection`, `Accept-Encoding` (curl manages these per request).
+  - **⚠ Because `Content-Type` is dropped, you MUST pass it yourself on every POST/PUT/PATCH:**
+    `curl -K auth.cfg -X POST "$BASE/path" -H 'Content-Type: application/json' --data-binary @body`.
+    Use the exact `Content-Type` the endpoint expects (e.g. Google `batchexecute` needs
+    `application/x-www-form-urlencoded;charset=UTF-8`) — a wrong/missing one is a common cause of
+    `400`/`403`. curl sets `Content-Length` itself; don't add it.
 - **Static cookies, no jar.** It does **not** use `cookie-jar` by default, so curl never writes a
   response's rotated `Set-Cookie` back over your captured-good cookies (servers like Google rotate
   on *every* response, including error responses — a write-back jar drifts the session into
