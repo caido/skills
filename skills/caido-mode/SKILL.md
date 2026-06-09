@@ -270,6 +270,62 @@ When you report back, name the collection and sessions — never IDs.
 
 ---
 
+## Match & Replace — auto-rewrite traffic
+
+Match & Replace (Caido calls these **"Tamper" rules** internally) rewrites requests/responses
+**automatically as they pass through Caido**. The killer use: **inject auth at the proxy** so your
+curl commands don't carry it — add a rule that sets `Authorization` on every proxied request, then
+`curl -x <proxy> -k "$BASE/path"` is authenticated with no `-K`/headers at all.
+
+A rule is one **section** (which part) × one **operation** × a **matcher** × a **replacer**, with
+optional **condition** (HTTPQL scope) and **sources**:
+
+| Piece | Choices |
+|------|---------|
+| **section** | req: `req-method req-path req-query req-body req-first-line req-header req-all req-sni` · resp: `resp-body resp-status resp-first-line resp-header resp-all` · ws: `ws-up ws-down` |
+| **operation** | `raw` (match within the section) · `update`/`add`/`remove` (header & query only, by name) · method/status only `update` |
+| **matcher** | `--match-value <str>` · `--match-regex <re>` · `--match-full` (whole section) · `--match-name <n>` (header/query update/add/remove) |
+| **replacer** | `--replace <term>` (literal; `""` allowed) · `--workflow <id>` (run a workflow) |
+| **condition** | `--condition '<httpql>'` — only apply when the request matches (e.g. one host) |
+| **sources** | `--sources INTERCEPT,REPLAY,…` — which traffic it applies to |
+
+Three gotchas, all defaulted for you:
+- **New rules are created DISABLED.** Enable with `toggle-mr-rule <id> --on`.
+- **Default collection** is Caido's "Default Collection" (override with `--collection <name|id>`).
+- **Default sources** is `INTERCEPT` (proxy traffic), matching Caido. Add `--sources` to broaden.
+
+**Preview before committing:** `test-mr-rule` applies a rule to a raw request *without creating
+anything* — use it to confirm a rule does what you expect.
+
+```bash
+# Preview: would this add the header correctly?
+npx tsx caido-client.ts test-mr-rule --section req-header --operation add \
+  --match-name X-Test --replace hi --raw 'GET / HTTP/1.1\r\nHost: t.com\r\n\r\n'
+
+# Inject auth on all proxied requests to one host (then enable it)
+ID=$(npx tsx caido-client.ts create-mr-rule --section req-header --operation add \
+  --match-name Authorization --replace "Bearer eyJ…" \
+  --condition 'req.host.eq:"target.com"' --name "auth inject" | jq -r '.created.id')
+npx tsx caido-client.ts toggle-mr-rule "$ID" --on
+
+# Other patterns
+npx tsx caido-client.ts create-mr-rule --section req-header --operation remove \
+  --match-name If-None-Match --sources REPLAY --name "drop INM"           # strip a header
+npx tsx caido-client.ts create-mr-rule --section req-body --match-regex '"admin":false' \
+  --replace '"admin":true' --name "force admin"                            # body regex
+npx tsx caido-client.ts create-mr-rule --section resp-status --replace 403 --name "fake 403"  # response
+
+npx tsx caido-client.ts mr-rules                # list rules (+ enabled state)
+npx tsx caido-client.ts toggle-mr-rule <id> --off
+npx tsx caido-client.ts delete-mr-rule <id>
+```
+
+Manage collections with `mr-collections`, `create-mr-collection`, `rename-mr-collection`,
+`delete-mr-collection`; `move-mr-rule <id> <collection>`; `update-mr-rule <id> …` re-specs a rule
+(same flags as create); `rename-mr-rule <id> <name>`.
+
+---
+
 ## Output control (works with `get`, `get-response`, `replay`, `edit`, `send-raw`, `edit-session`)
 
 | Flag | Description |
@@ -403,6 +459,7 @@ id**; output is JSON unless noted. Run `--help` for full flag lists.
 | **Tasks** | `tasks` · `cancel-task <id>` |
 | **Hosted files** | `hosted-files` · `delete-hosted-file <id>` |
 | **Intercept** | `intercept-status` · `intercept-enable` · `intercept-disable` |
+| **Match & Replace** | `mr-rules` · `mr-collections` · `create-mr-rule --section … [--operation] [--match-*] [--replace/--workflow] [--name --collection --condition --sources]` · `test-mr-rule --raw … --section …` (preview, no-op) · `toggle-mr-rule <id> --on\|--off` · `rename-mr-rule <id> <n>` · `move-mr-rule <id> <coll>` · `update-mr-rule <id> …` · `delete-mr-rule <id>` · `create-mr-collection <n>` · `rename-mr-collection <c> <n>` · `delete-mr-collection <c>` |
 | **Info / auth** | `viewer` · `plugins` · `health` · `setup <pat> [url] [--proxy]` · `auth-status` |
 
 ---
@@ -425,6 +482,7 @@ lib/
     findings.ts          # findings
     management.ts        # scopes, filters, environments, projects, hosted-files, tasks
     intercept.ts         # intercept status/enable/disable
+    matchreplace.ts      # match & replace (tamper) rules — buildTamperSection + commands
     info.ts              # viewer, plugins, health, setup, auth-status
 ```
 

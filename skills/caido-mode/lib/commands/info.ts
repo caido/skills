@@ -3,7 +3,7 @@
 import { Client } from "@caido/sdk-client";
 import {
   getClient, resolveProxy, resolveActiveUrl, readCaidoRoot, getCaidoInstance,
-  upsertCaidoInstance, SecretsTokenCache, SECRETS_PATH, isCachedTokenValid,
+  upsertCaidoInstance, SecretsTokenCache, SECRETS_PATH, isCachedTokenValid, QUIET_LOGGER,
 } from "../client";
 import { PLUGIN_PACKAGES_QUERY } from "../graphql";
 
@@ -35,6 +35,7 @@ export async function cmdSetup(pat: string, url: string, proxy?: string) {
   const client = new Client({
     url,
     auth: { pat, cache: setupCache },
+    logger: QUIET_LOGGER,
   });
 
   try {
@@ -93,7 +94,7 @@ export async function cmdAuthStatus() {
 
   const statusCache = new SecretsTokenCache(url);
   const pat = process.env.CAIDO_PAT || instance.pat || "";
-  const client = new Client({ url, auth: { pat, cache: statusCache } });
+  const client = new Client({ url, auth: { pat, cache: statusCache }, logger: QUIET_LOGGER });
 
   try {
     await client.connect({ ready: { retries: 2, timeout: 3000, interval: 1000 } });

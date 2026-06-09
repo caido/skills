@@ -111,3 +111,90 @@ export const PLUGIN_PACKAGES_QUERY = gql`
     }
   }
 `;
+
+// ── Match & Replace (Caido calls these "Tamper" rules internally) ──
+// Schema validated against a live Caido instance via introspection + testTamperRule.
+
+const TAMPER_RULE_FIELDS = `id name enable { rank } collection { id name }`;
+
+export const TAMPER_RULE_COLLECTIONS = gql`
+  query {
+    tamperRuleCollections {
+      id
+      name
+      rules { id name enable { rank } }
+    }
+  }
+`;
+
+export const CREATE_TAMPER_RULE = gql`
+  mutation($input: CreateTamperRuleInput!) {
+    createTamperRule(input: $input) {
+      rule { ${TAMPER_RULE_FIELDS} }
+      error { __typename }
+    }
+  }
+`;
+
+export const UPDATE_TAMPER_RULE = gql`
+  mutation($id: ID!, $input: UpdateTamperRuleInput!) {
+    updateTamperRule(id: $id, input: $input) {
+      rule { ${TAMPER_RULE_FIELDS} }
+      error { __typename }
+    }
+  }
+`;
+
+export const DELETE_TAMPER_RULE = gql`
+  mutation($id: ID!) {
+    deleteTamperRule(id: $id) { deletedId }
+  }
+`;
+
+export const TOGGLE_TAMPER_RULE = gql`
+  mutation($id: ID!, $enabled: Boolean!) {
+    toggleTamperRule(id: $id, enabled: $enabled) {
+      rule { ${TAMPER_RULE_FIELDS} }
+      error { __typename }
+    }
+  }
+`;
+
+export const RENAME_TAMPER_RULE = gql`
+  mutation($id: ID!, $name: String!) {
+    renameTamperRule(id: $id, name: $name) { rule { ${TAMPER_RULE_FIELDS} } }
+  }
+`;
+
+export const MOVE_TAMPER_RULE = gql`
+  mutation($id: ID!, $collectionId: ID!) {
+    moveTamperRule(id: $id, collectionId: $collectionId) { rule { ${TAMPER_RULE_FIELDS} } }
+  }
+`;
+
+export const TEST_TAMPER_RULE = gql`
+  mutation($input: TestTamperRuleInput!) {
+    testTamperRule(input: $input) {
+      raw
+      error { __typename }
+    }
+  }
+`;
+
+export const CREATE_TAMPER_RULE_COLLECTION = gql`
+  mutation($input: CreateTamperRuleCollectionInput!) {
+    createTamperRuleCollection(input: $input) { collection { id name } }
+  }
+`;
+
+export const RENAME_TAMPER_RULE_COLLECTION = gql`
+  mutation($id: ID!, $name: String!) {
+    renameTamperRuleCollection(id: $id, name: $name) { collection { id name } }
+  }
+`;
+
+export const DELETE_TAMPER_RULE_COLLECTION = gql`
+  mutation($id: ID!) {
+    deleteTamperRuleCollection(id: $id) { deletedId }
+  }
+`;

@@ -198,6 +198,17 @@ export function loadConfig(): CaidoConfig {
   process.exit(1);
 }
 
+/**
+ * Keep the SDK's chatter (e.g. "[caido] Loaded token from cache") off stdout so command
+ * output stays pure JSON. Warnings/errors still surface on stderr.
+ */
+export const QUIET_LOGGER = {
+  debug() {},
+  info() {},
+  warn: (message: string, ...args: unknown[]) => console.error(message, ...args),
+  error: (message: string, ...args: unknown[]) => console.error(message, ...args),
+};
+
 let _client: Client | null = null;
 
 export async function getClient(): Promise<Client> {
@@ -209,6 +220,7 @@ export async function getClient(): Promise<Client> {
   _client = new Client({
     url: config.url,
     auth: { pat: config.pat, cache },
+    logger: QUIET_LOGGER,
   });
 
   try {

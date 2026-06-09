@@ -14,6 +14,8 @@ import type { ConnectionOverrides, NameChange, EditTarget } from "./lib/commands
 import { cmdFindings, cmdGetFinding, cmdCreateFinding, cmdUpdateFinding } from "./lib/commands/findings";
 import { cmdScopes, cmdCreateScope, cmdUpdateScope, cmdDeleteScope, cmdFilters, cmdCreateFilter, cmdUpdateFilter, cmdDeleteFilter, cmdEnvs, cmdCreateEnv, cmdSelectEnv, cmdEnvSet, cmdDeleteEnv, cmdProjects, cmdSelectProject, cmdHostedFiles, cmdDeleteHostedFile, cmdTasks, cmdCancelTask } from "./lib/commands/management";
 import { cmdInterceptStatus, cmdInterceptSet } from "./lib/commands/intercept";
+import { cmdMrRules, cmdMrCollections, cmdCreateMrRule, cmdUpdateMrRule, cmdDeleteMrRule, cmdToggleMrRule, cmdRenameMrRule, cmdMoveMrRule, cmdTestMrRule, cmdCreateMrCollection, cmdRenameMrCollection, cmdDeleteMrCollection } from "./lib/commands/matchreplace";
+import type { MrRuleOpts } from "./lib/commands/matchreplace";
 import { cmdViewer, cmdPlugins, cmdHealth, cmdSetup, cmdAuthStatus } from "./lib/commands/info";
 
 const DEBUG = process.env.DEBUG === "1";
@@ -79,6 +81,27 @@ function requireNameChange(args: string[], startIdx: number): NameChange {
     process.exit(1);
   }
   return keep ? { kind: "keep" } : { kind: "rename", name: newName! };
+}
+
+/** Parse Match & Replace rule options. --replace/--match-value accept empty strings. */
+function parseMrOpts(args: string[], startIdx: number): MrRuleOpts {
+  const o: MrRuleOpts = { section: "" };
+  for (let i = startIdx; i < args.length; i++) {
+    const a = args[i];
+    const v = args[i + 1];
+    if (a === "--section" && v) { o.section = v; i++; }
+    else if ((a === "--operation" || a === "--op") && v) { o.operation = v; i++; }
+    else if (a === "--match-value" && v !== undefined) { o.matchValue = v; i++; }
+    else if (a === "--match-regex" && v) { o.matchRegex = v; i++; }
+    else if (a === "--match-full") { o.matchFull = true; }
+    else if (a === "--match-name" && v) { o.matchName = v; i++; }
+    else if (a === "--replace" && v !== undefined) { o.replace = v; i++; }
+    else if (a === "--workflow" && v) { o.workflowId = v; i++; }
+    else if (a === "--name" && v) { o.name = v; i++; }
+    else if (a === "--condition" && v) { o.condition = v; i++; }
+    else if (a === "--sources" && v) { o.sources = v.split(",").map(s => s.trim()).filter(Boolean); i++; }
+  }
+  return o;
 }
 
 function printUsage() {
@@ -277,6 +300,48 @@ Usage:
   intercept-status             Check intercept status
   intercept-enable             Enable request interception
   intercept-disable            Disable request interception
+
+═══════════════════════════════════════════════
+ MATCH & REPLACE  (auto-rewrite proxied traffic; Caido "Tamper" rules)
+═══════════════════════════════════════════════
+
+  mr-rules                     List all M&R rules
+  mr-collections               List M&R collections
+  create-mr-rule               Create a rule (auto-applies to proxied traffic)
+    --section <s>              REQUIRED. What to tamper (see sections below)
+    --operation <op>           raw | update | add | remove (default: section's only/raw)
+    --match-value <str>        Match a literal term            (raw ops)
+    --match-regex <re>         Match a regex                   (raw ops)
+    --match-full               Match the entire section        (raw ops)
+    --match-name <name>        Header/param name        (header/query update/add/remove)
+    --replace <term>           Replacement string (empty string allowed)
+    --workflow <id>            Replace via a workflow instead of a term
+    --name <name>              Rule name
+    --collection <name|id>     Put the rule in this M&R collection
+    --condition <httpql>       Only apply when the request matches this HTTPQL
+    --sources <a,b,…>          Limit to sources: INTERCEPT,REPLAY,AUTOMATE,WORKFLOW,…
+  update-mr-rule <id>          Replace a rule's config (same flags as create)
+  rename-mr-rule <id> <name>   Rename a rule
+  toggle-mr-rule <id> --on|--off   Enable/disable a rule
+  move-mr-rule <id> <coll>     Move a rule to a collection (by name or id)
+  delete-mr-rule <id>          Delete a rule
+  test-mr-rule --raw <…>       Preview a rule on a raw request WITHOUT creating it
+                               (same --section/op/match/replace flags)
+  create-mr-collection <name>  · rename-mr-collection <c> <n> · delete-mr-collection <c>
+
+  Sections:
+    request : req-method req-path req-query req-body req-first-line req-header req-all req-sni
+    response: resp-body resp-status resp-first-line resp-header resp-all
+    websocket: ws-up ws-down
+    Operations per section: header/query → raw|update|add|remove; method/status → update;
+    sni → raw (replacer only); everything else → raw (matcher+replacer).
+
+  Example — strip a header on every replayed request:
+    create-mr-rule --section req-header --operation remove --match-name "If-None-Match" \
+      --name "drop INM" --sources REPLAY
+  Example — inject auth on all proxied traffic to a host:
+    create-mr-rule --section req-header --operation add --match-name "Authorization" \
+      --replace "Bearer eyJ…" --condition 'req.host.eq:"target.com"' --name "auth inject"
 
 ═══════════════════════════════════════════════
  INFO
@@ -753,6 +818,68 @@ async function main() {
     case "intercept-status": { await cmdInterceptStatus(); break; }
     case "intercept-enable": { await cmdInterceptSet(true); break; }
     case "intercept-disable": { await cmdInterceptSet(false); break; }
+
+    // ── Match & Replace (Tamper) ──
+    case "mr-rules": { await cmdMrRules(); break; }
+    case "mr-collections": { await cmdMrCollections(); break; }
+
+    case "create-mr-rule": {
+      await cmdCreateMrRule(parseMrOpts(args, 1), parseCollectionId(args, 1));
+      break;
+    }
+    case "update-mr-rule": {
+      if (!args[1]) { console.error("Error: rule id required"); process.exit(1); }
+      await cmdUpdateMrRule(args[1], parseMrOpts(args, 2));
+      break;
+    }
+    case "delete-mr-rule": {
+      if (!args[1]) { console.error("Error: rule id required"); process.exit(1); }
+      await cmdDeleteMrRule(args[1]);
+      break;
+    }
+    case "toggle-mr-rule": {
+      if (!args[1]) { console.error("Error: rule id required"); process.exit(1); }
+      const off = args.includes("--off") || args.includes("--disable");
+      const on = args.includes("--on") || args.includes("--enable");
+      if (off === on) { console.error("Error: pass exactly one of --on/--enable or --off/--disable"); process.exit(1); }
+      await cmdToggleMrRule(args[1], on);
+      break;
+    }
+    case "rename-mr-rule": {
+      if (!args[1] || !args[2]) { console.error("Error: rule id and new name required"); process.exit(1); }
+      await cmdRenameMrRule(args[1], args[2]);
+      break;
+    }
+    case "move-mr-rule": {
+      if (!args[1] || !args[2]) { console.error("Error: rule id and collection (name or id) required"); process.exit(1); }
+      await cmdMoveMrRule(args[1], args[2]);
+      break;
+    }
+    case "test-mr-rule": {
+      let mrRaw: string | undefined;
+      for (let i = 1; i < args.length; i++) {
+        if (args[i] === "--raw" && args[i + 1]) { mrRaw = args[i + 1]; i++; }
+      }
+      if (!mrRaw) { console.error("Error: --raw <str|@file|-> required (the request/response to tamper)"); process.exit(1); }
+      await cmdTestMrRule(parseMrOpts(args, 1), mrRaw);
+      break;
+    }
+
+    case "create-mr-collection": {
+      if (!args[1]) { console.error("Error: collection name required"); process.exit(1); }
+      await cmdCreateMrCollection(args[1]);
+      break;
+    }
+    case "rename-mr-collection": {
+      if (!args[1] || !args[2]) { console.error("Error: collection (id or name) and new name required"); process.exit(1); }
+      await cmdRenameMrCollection(args[1], args[2]);
+      break;
+    }
+    case "delete-mr-collection": {
+      if (!args[1]) { console.error("Error: collection (id or name) required"); process.exit(1); }
+      await cmdDeleteMrCollection(args[1]);
+      break;
+    }
 
     // ── Info ──
     case "viewer": { await cmdViewer(); break; }

@@ -28,6 +28,7 @@ Cookies and auth tokens are huge. Instead of copy-pasting 2KB of session cookies
 | **Projects** | `projects`, `select-project` |
 | **Hosted Files** | `hosted-files`, `delete-hosted-file` |
 | **Intercept** | `intercept-status`, `intercept-enable`, `intercept-disable` |
+| **Match & Replace** | `mr-rules`, `mr-collections`, `create-mr-rule`, `test-mr-rule`, `toggle-mr-rule`, `rename-mr-rule`, `move-mr-rule`, `update-mr-rule`, `delete-mr-rule`, `create/rename/delete-mr-collection` |
 | **Info** | `viewer`, `plugins`, `health` |
 | **Auth** | `setup`, `auth-status` |
 
@@ -76,6 +77,7 @@ lib/
     findings.ts          # findings, get-finding, create-finding, update-finding
     management.ts        # scopes, filters, environments, projects, hosted-files, tasks
     intercept.ts         # intercept-status, intercept-enable, intercept-disable
+    matchreplace.ts      # match & replace (tamper) rules — all sections/operations + test-mr-rule
     info.ts              # viewer, plugins, health, setup, auth-status
 ```
 
@@ -290,12 +292,31 @@ source:"replay"                               # Filter by source
 preset:"My Filter"                            # Use saved filter preset
 ```
 
+### Match & Replace (Tamper rules)
+
+Auto-rewrite requests/responses passing through Caido. A rule is a **section** × **operation** × **matcher** × **replacer** (+ optional HTTPQL `--condition` and `--sources`). New rules are created **disabled** (`toggle-mr-rule <id> --on`); they default to the "Default Collection" and `sources: INTERCEPT`.
+
+```bash
+# preview a rule without creating it (no-op against the live engine)
+npx tsx caido-client.ts test-mr-rule --section req-header --operation add \
+  --match-name X-Test --replace hi --raw 'GET / HTTP/1.1\r\nHost: t.com\r\n\r\n'
+
+# inject auth on all proxied requests to a host, then enable
+ID=$(npx tsx caido-client.ts create-mr-rule --section req-header --operation add \
+  --match-name Authorization --replace "Bearer …" --condition 'req.host.eq:"t.com"' | jq -r '.created.id')
+npx tsx caido-client.ts toggle-mr-rule "$ID" --on
+
+npx tsx caido-client.ts mr-rules
+```
+
+Sections: `req-method req-path req-query req-body req-first-line req-header req-all req-sni resp-body resp-status resp-first-line resp-header resp-all ws-up ws-down`. Operations: `raw` (matcher `--match-value`/`--match-regex`/`--match-full`), or `update`/`add`/`remove` for headers/query (`--match-name`). Replacer: `--replace <term>` or `--workflow <id>`.
+
 ## Architecture
 
 Built on `@caido/sdk-client` v0.2.0+. Multi-file architecture with clean separation:
 
 - **High-level SDK methods** for most features (requests, replay, findings, scopes, filters, environments, projects, hosted files, tasks, user)
-- **`client.graphql.query()`/`mutation()`** with `gql` tagged templates for features not yet in SDK (intercept, plugins, automate/fuzz)
+- **`client.graphql.query()`/`mutation()`** with `gql` tagged templates for features not yet in SDK (intercept, plugins, automate/fuzz, **match & replace**)
 - **No raw fetch anywhere** — everything goes through the SDK
 
 ## Claude Code Integration
