@@ -173,9 +173,13 @@ Usage:
     --sni / --connect-host / --connect-port / --connect-tls / --connect-no-tls
 
   export-curl <request-id>     Export a FULL self-contained curl command (give to user)
-    --config                   Instead, write a reusable curl -K config + cookie jar
-                               for INTERNAL testing (proxies through Caido)
+    --config                   Instead, write a reusable curl -K config for INTERNAL
+                               testing: a FAITHFUL STATIC snapshot of ALL the request's
+                               auth/identity headers + static cookies, proxied via Caido
     --out <file>               Config path (default: /tmp/caido/<host>/auth.cfg)
+    --cookie-jar               Use a read/write cookie jar instead of static cookies
+                               (follows Set-Cookie rotation; can drift — opt-in)
+    --exclude <header>         Omit a header from the config (repeatable)
 
 ═══════════════════════════════════════════════
  REPLAY TAB LOOKUP
@@ -536,12 +540,15 @@ async function main() {
 
     case "export-curl": {
       if (!args[1]) { console.error("Error: request-id required"); process.exit(1); }
-      let asConfig = false, ecOut: string | undefined;
+      let asConfig = false, ecOut: string | undefined, cookieJar = false;
+      const ecExclude: string[] = [];
       for (let i = 2; i < args.length; i++) {
         if (args[i] === "--config") { asConfig = true; }
         else if (args[i] === "--out" && args[i + 1]) { ecOut = args[i + 1]; i++; }
+        else if (args[i] === "--cookie-jar") { cookieJar = true; }
+        else if (args[i] === "--exclude" && args[i + 1]) { ecExclude.push(args[i + 1]); i++; }
       }
-      if (asConfig) await cmdExportCurlConfig(args[1], ecOut);
+      if (asConfig) await cmdExportCurlConfig(args[1], { out: ecOut, cookieJar, exclude: ecExclude });
       else await cmdExportCurl(args[1]);
       break;
     }

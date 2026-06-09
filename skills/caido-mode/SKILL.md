@@ -1,6 +1,6 @@
 ---
 name: caido-mode
-description: Full Caido SDK integration for Claude Code. Search HTTP history with HTTPQL, test with curl proxied through Caido (caching auth in reusable curl config files + cookie jars), and organize handoffs into named replay sessions and collections - all via the official @caido/sdk-client. PAT auth recommended.
+description: Full Caido SDK integration for Claude Code. Search HTTP history with HTTPQL, test with curl proxied through Caido (caching auth in reusable static curl config files), add match & replace rules, and organize handoffs into named replay sessions and collections - all via the official @caido/sdk-client. PAT auth recommended.
 tags: [worker]
 ---
 
@@ -15,8 +15,9 @@ testing. The tool lives at `~/.claude/skills/caido-mode/caido-client.ts`; every 
 There are **two distinct modes**:
 
 1. **Testing → use `curl`, always proxied through Caido.** Find a real authenticated request in
-   history, cache its auth into a reusable curl config + cookie jar, then probe with
-   `curl -K auth.cfg "$BASE/path"`. **All traffic must go through Caido** (the config carries the
+   history, cache its auth into a reusable curl config (a faithful static snapshot of its headers
+   + cookies), then probe with `curl -K auth.cfg "$BASE/path"`. **All traffic must go through
+   Caido** (the config carries the
    proxy), so every request lands in HTTP history.
 2. **Handoff → use replay sessions + collections.** Only when handing a request (or a set) to the
    *user* do you materialize it as a named replay session inside a named collection.
@@ -52,11 +53,12 @@ Hard rules:
 npx tsx caido-client.ts search 'req.host.cont:"target.com" AND req.path.cont:"/api/user"' --recent --compact
 #    → 8431  200  GET target.com/api/user/me
 
-# 2. ONCE per target: cache its auth into a reusable curl config + cookie jar.
+# 2. ONCE per target: cache its auth into a reusable curl config.
 npx tsx caido-client.ts export-curl 8431 --config
-#    → writes /tmp/caido/target.com/auth.cfg  (proxy + insecure + Authorization/UA/X-CSRF…)
-#           + /tmp/caido/target.com/cookies.txt
-#      and prints BASE=https://target.com
+#    → writes /tmp/caido/target.com/auth.cfg — a FAITHFUL STATIC snapshot:
+#      proxy + insecure + compressed + ALL the request's auth/identity headers
+#      (cookies, Authorization, Origin/Referer, X-*, Sec-*, app-specific headers)
+#      and prints BASE + the captured header list
 
 # 3. Test with curl. -K carries the proxy + auth, so it goes through Caido into history.
 BASE=https://target.com
@@ -80,21 +82,40 @@ curl --path-as-is -K /tmp/caido/target.com/auth.cfg "$BASE/api/../../../etc/pass
 
 (Likewise add `-g`/`--globoff` if the URL contains `[ ] { }` you don't want curl to interpret.)
 
-### Token-saving conventions
+### The config is a faithful STATIC snapshot (important)
 
-- **Per-target scratch dir:** `/tmp/caido/<host>/` holds `auth.cfg`, `cookies.txt`, body files,
-  and notes. `export-curl --config` creates it. Reuse it instead of re-deriving setup.
+`export-curl --config` captures **every** auth/identity header from the base request (not a
+curated subset) and **inlines the cookies statically**. Two deliberate choices, both learned the
+hard way:
+
+- **All headers, not an allowlist.** Modern apps gate authorization on app-specific headers you
+  can't predict — `x-goog-ext-*`, `X-Browser-Validation`, `X-Client-Data`, `Origin`, `Referer`,
+  `X-Same-Domain`, `Sec-*`, … A narrow allowlist silently drops these and you get opaque
+  `403`/`PERMISSION_DENIED`. The config now mirrors what actually authorized the request. (Only
+  truly per-request/volatile headers are dropped: `Host`, `Content-Length`, `Content-Type`,
+  `Connection`, `Accept-Encoding`.)
+- **Static cookies, no jar.** It does **not** use `cookie-jar` by default, so curl never writes a
+  response's rotated `Set-Cookie` back over your captured-good cookies (servers like Google rotate
+  on *every* response, including error responses — a write-back jar drifts the session into
+  failure). Need to follow rotation? `export-curl <id> --config --cookie-jar` opts in.
+
+To drop a specific header: `--exclude <name>` (repeatable). To omit cookies entirely (e.g. when a
+Match & Replace rule injects auth): `--exclude cookie`.
+
+### Other conventions
+
+- **Per-target scratch dir:** `/tmp/caido/<host>/` holds `auth.cfg`, body files, notes.
 - **`$BASE`:** set `BASE=https://<host>` once; write requests as `"$BASE/path"`.
-- **Cookie jar:** the config wires `cookie`/`cookie-jar` to `cookies.txt`, so curl **reads and
-  re-saves** cookies automatically — rotation (Set-Cookie) is captured without you doing anything.
 - **Bodies in files:** save large/complex bodies once and send with `--data-binary @body.json`
-  (this is the correct use of `--data-binary` — a byte-exact *body*).
-- **Lazy refresh:** don't regenerate proactively. Only when a request returns **401/403** or a
-  login redirect, re-pull a fresh authenticated request from history and re-run
-  `export-curl <new-id> --config` to refresh the config + jar, then retry.
-- **CSRF:** double-submit tokens ride along automatically (cookie in the jar + the `X-CSRF*`
-  header the config copied). For per-action tokens, fetch fresh:
-  `T=$(curl -sK auth.cfg "$BASE/csrf" | jq -r .token)` then `-H "X-CSRF-Token: $T"`.
+  (the correct use of `--data-binary` — a byte-exact *body*). Add `-H 'Content-Type: …'` per
+  request since the config omits it.
+- **Lazy refresh:** the snapshot is static, so when a request starts returning **401/403** (token
+  expired / cookies aged out), re-run `export-curl <fresh-id> --config` to re-snapshot, then retry.
+- **CSRF:** the matching `X-CSRF*`/double-submit header is captured automatically. For tokens that
+  rotate per action, fetch fresh: `T=$(curl -sK auth.cfg "$BASE/csrf" | jq -r .token)`.
+- **Proxy-injected auth (alternative):** instead of a config, a Match & Replace rule can inject
+  `Authorization`/cookies on all proxied traffic — then `curl -x <proxy> -k "$BASE/path"` needs no
+  headers. See **Match & Replace**.
 
 ### Giving commands to the user
 
@@ -434,7 +455,7 @@ id**; output is JSON unless noted. Run `--help` for full flag lists.
 | `get <id>` / `get-response <id>` | Full request / just the response (output-control flags) |
 | `raw <id>` | Dump byte-exact raw request. `--out <file> --response` |
 | `export-curl <id>` | Full self-contained curl (for the user) |
-| `export-curl <id> --config` | Reusable `-K` config + cookie jar (internal). `--out <file>` |
+| `export-curl <id> --config` | Reusable `-K` config — faithful static snapshot of all auth headers + inline cookies (internal). `--out <file>` · `--cookie-jar` (follow rotation) · `--exclude <h>` |
 | **Send / edit** | |
 | `replay <id> --name <n>` | Replay into a new named session. `--raw --collection` + connection overrides |
 | `send-raw --host <h> --raw <s\|@file\|-> --name <n>` | Send a raw request via a new named session. `--port --tls/--no-tls --collection` |
@@ -493,8 +514,8 @@ lib/
 1. **Test with `curl`, always through Caido** — the proxy must be in the path (config does this;
    otherwise `-x <proxy>`). **Exception:** bruteforce/fuzzing (`ffuf`) or 100+ requests at once go
    **direct** to avoid bloating HTTP history; bring interesting hits back into Caido.
-2. **Cache auth once:** `export-curl <id> --config` → `/tmp/caido/<host>/auth.cfg` + cookie jar.
-   Test with `curl -K auth.cfg "$BASE/path"`. Don't re-paste cookies/JWTs.
+2. **Cache auth once:** `export-curl <id> --config` → `/tmp/caido/<host>/auth.cfg` (faithful static
+   snapshot of ALL auth headers + inline cookies). Test with `curl -K auth.cfg "$BASE/path"`.
 3. **Refresh lazily** — only on 401/403/login-redirect, regenerate the config from a fresh request.
 4. **Give the user FULL self-contained curl** (`export-curl <id>`); never a `-K` line.
 5. **Browse with `--recent --compact`;** `get`/`export-curl` only the request you'll work from.

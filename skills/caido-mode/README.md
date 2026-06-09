@@ -1,12 +1,12 @@
 # Caido Mode
 
-Full SDK CLI for [Caido](https://caido.io) built on the official [`@caido/sdk-client`](https://github.com/caido/sdk-js) package. Search HTTP history, test with curl proxied through Caido (caching auth into reusable curl config files + cookie jars), organize handoffs into named replay sessions/collections, manage scopes/filters/environments, create findings, and fuzz — all from the terminal.
+Full SDK CLI for [Caido](https://caido.io) built on the official [`@caido/sdk-client`](https://github.com/caido/sdk-js) package. Search HTTP history, test with curl proxied through Caido (caching auth into reusable static curl config files), add match & replace rules, organize handoffs into named replay sessions/collections, manage scopes/filters/environments, create findings, and fuzz — all from the terminal.
 
 ## Why?
 
 Cookies and auth tokens are huge. Instead of copy-pasting 2KB of session cookies into every test request, you find an organic request in Caido's history that already has valid auth and work from it. Two modes, kept strictly separate:
 
-1. **Testing → curl, proxied through Caido.** `export-curl <id> --config` caches a base request's auth into a reusable `-K` config + cookie jar under `/tmp/caido/<host>/`; then probe with `curl -K auth.cfg "$BASE/path"`. All traffic goes through Caido into history; the big auth blob stays in a file.
+1. **Testing → curl, proxied through Caido.** `export-curl <id> --config` caches a base request's auth into a reusable `-K` config under `/tmp/caido/<host>/` — a **faithful static snapshot** of *all* its auth/identity headers + inline cookies; then probe with `curl -K auth.cfg "$BASE/path"`. All traffic goes through Caido into history; the big auth blob stays in a file.
 2. **Handoff → named replay sessions in named collections.** Only when handing requests to the user do you materialize them in Caido's UI.
 
 ## What's Covered
@@ -14,7 +14,7 @@ Cookies and auth tokens are huge. Instead of copy-pasting 2KB of session cookies
 | Category | Commands |
 |----------|----------|
 | **HTTP History** | `search`, `recent`, `get`, `get-response`, `raw`, `export-curl` |
-| **curl testing** | `export-curl` (full command), `export-curl --config` (reusable `-K` config + cookie jar), `raw` (dump bytes) |
+| **curl testing** | `export-curl` (full command), `export-curl --config` (faithful static `-K` config: all auth headers + cookies), `raw` (dump bytes) |
 | **Edit & Replay** | `edit`, `replay`, `send-raw`, `edit-session` |
 | **Replay Tab Lookup** | `get-session`, `replay-entries`, `session-entries` |
 | **Sessions** | `create-session`, `rename-session`, `move-session`, `sessions`, `delete-sessions` |
@@ -113,10 +113,10 @@ Cache a base request's auth once, then probe with curl. Every request goes throu
 ```bash
 # 1. find an authenticated base request
 npx tsx caido-client.ts search 'req.host.cont:"target.com" AND req.path.cont:"/api/user"' --recent --compact
-# 2. ONCE: write a reusable curl config + cookie jar (proxy + auth baked in)
+# 2. ONCE: write a reusable curl config (faithful static snapshot of all auth headers + cookies)
 npx tsx caido-client.ts export-curl 8431 --config
-#    → /tmp/caido/target.com/auth.cfg + cookies.txt, BASE=https://target.com
-# 3. test (the config carries the Caido proxy + auth; cookies auto-rotate via the jar)
+#    → /tmp/caido/target.com/auth.cfg (proxy + insecure + compressed + every auth header), BASE=…
+# 3. test (the config carries the Caido proxy + the full captured auth)
 BASE=https://target.com
 curl -K /tmp/caido/target.com/auth.cfg "$BASE/api/user/999"
 curl -K /tmp/caido/target.com/auth.cfg -X POST "$BASE/api/profile" --data-binary @body.json
@@ -177,8 +177,9 @@ npx tsx caido-client.ts replay <id> --name "repro" --connect-host 10.0.0.5 --con
 
 ```bash
 npx tsx caido-client.ts export-curl <request-id>            # full self-contained command (for the user)
-npx tsx caido-client.ts export-curl <request-id> --config   # reusable -K config + cookie jar (internal)
+npx tsx caido-client.ts export-curl <request-id> --config   # faithful static -K config (internal)
 npx tsx caido-client.ts export-curl <request-id> --config --out /tmp/caido/host/auth.cfg
+npx tsx caido-client.ts export-curl <request-id> --config --cookie-jar   # follow Set-Cookie rotation (opt-in)
 ```
 
 ### Findings
