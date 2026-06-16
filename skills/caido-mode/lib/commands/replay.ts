@@ -1,7 +1,7 @@
 /** Replay, Edit, Sessions, Collections, Automate/Fuzz commands */
 
 import { getClient } from "../client";
-import { decodeRaw, formatHttpRaw } from "../output";
+import { decodeRaw, formatHttpRaw, splitRaw } from "../output";
 import {
   CREATE_AUTOMATE_SESSION,
   GET_AUTOMATE_SESSION,
@@ -84,22 +84,7 @@ export function normalizeRaw(raw: string): string {
  * contain \n, e.g. JSON or multipart). Idempotent — re-running is a no-op.
  */
 export function ensureHeaderCrlf(raw: string): string {
-  const idxCrlf = raw.indexOf("\r\n\r\n");
-  const idxLf = raw.indexOf("\n\n");
-
-  let headerBlock: string;
-  let body: string | undefined;
-  if (idxCrlf >= 0 && (idxLf < 0 || idxCrlf <= idxLf)) {
-    headerBlock = raw.slice(0, idxCrlf);
-    body = raw.slice(idxCrlf + 4);
-  } else if (idxLf >= 0) {
-    headerBlock = raw.slice(0, idxLf);
-    body = raw.slice(idxLf + 2);
-  } else {
-    headerBlock = raw; // no blank-line terminator; normalize what's there
-    body = undefined;
-  }
-
+  const { headerBlock, body } = splitRaw(raw);
   // Collapse any CRLF to LF, then promote every LF to CRLF — handles bare-LF and
   // mixed endings without doubling existing CRLFs.
   const headers = headerBlock.replace(/\r\n/g, "\n").replace(/\n/g, "\r\n");
@@ -115,19 +100,10 @@ function applyRawEdits(raw: string, edits: RawEdits): string {
   // Header/body boundary = the FIRST blank line (CRLF or LF, whichever comes first),
   // and the line ending is derived from the header block — never from body content,
   // so a body that contains \r\n\r\n (e.g. multipart) can't be mistaken for the split.
-  const idxCrlf = raw.indexOf("\r\n\r\n");
-  const idxLf = raw.indexOf("\n\n");
-  let headerBlock: string;
-  let bodyPart: string;
-  let lineEnd: string;
-  let hasBody: boolean;
-  if (idxCrlf >= 0 && (idxLf < 0 || idxCrlf <= idxLf)) {
-    headerBlock = raw.slice(0, idxCrlf); bodyPart = raw.slice(idxCrlf + 4); lineEnd = "\r\n"; hasBody = true;
-  } else if (idxLf >= 0) {
-    headerBlock = raw.slice(0, idxLf); bodyPart = raw.slice(idxLf + 2); lineEnd = "\n"; hasBody = true;
-  } else {
-    headerBlock = raw; bodyPart = ""; lineEnd = raw.includes("\r\n") ? "\r\n" : "\n"; hasBody = false;
-  }
+  const { headerBlock, body: splitBody, sep } = splitRaw(raw);
+  let bodyPart = splitBody ?? "";
+  const lineEnd = sep === "\r\n\r\n" ? "\r\n" : sep === "\n\n" ? "\n" : (raw.includes("\r\n") ? "\r\n" : "\n");
+  let hasBody = sep !== undefined;
 
   const headerLines = headerBlock.split(lineEnd);
   let requestLine = headerLines[0];
@@ -556,34 +532,44 @@ function formatReplayEntry(entry: any, opts: OutputOpts, includeRaw: boolean) {
   return output;
 }
 
-// -- Sessions --
+// -- Pagination helper --
 
-export async function cmdReplaySessions(limit?: number) {
-  const client = await getClient();
-  // Sessions can't be sorted (SDK exposes no order field), so a single page can hide
-  // recently-created sessions on later pages. Paginate fully (capped) by default.
+async function paginateSdkList<T>(
+  fetchPage: (after: string | undefined, want: number) => Promise<{
+    edges: Array<{ node: T }>;
+    pageInfo: { hasNextPage: boolean; endCursor?: string | null };
+  }>,
+  mapNode: (node: T) => any,
+  limit?: number,
+): Promise<{ results: any[]; truncated: boolean }> {
   const cap = limit && limit > 0 ? limit : 2000;
   const results: any[] = [];
   let after: string | undefined;
   let truncated = false;
   while (results.length < cap) {
     const want = Math.min(100, cap - results.length);
-    const page = after
-      ? await client.replay.sessions.list().after(after).first(want)
-      : await client.replay.sessions.list().first(want);
-    for (const e of page.edges) {
-      results.push({
-        id: e.node.id,
-        name: e.node.name,
-        collectionId: e.node.collectionId,
-        activeEntryId: e.node.activeEntryId,
-      });
-    }
+    const page = await fetchPage(after, want);
+    for (const e of page.edges) results.push(mapNode(e.node));
     if (!page.pageInfo.hasNextPage) break;
     if (results.length >= cap) { truncated = true; break; }
-    after = page.pageInfo.endCursor;
+    after = page.pageInfo.endCursor ?? undefined;
   }
+  return { results, truncated };
+}
 
+// -- Sessions --
+
+export async function cmdReplaySessions(limit?: number) {
+  const client = await getClient();
+  // Sessions can't be sorted (SDK exposes no order field), so a single page can hide
+  // recently-created sessions on later pages. Paginate fully (capped) by default.
+  const { results, truncated } = await paginateSdkList(
+    (after, want) => after
+      ? client.replay.sessions.list().after(after).first(want)
+      : client.replay.sessions.list().first(want),
+    (n: any) => ({ id: n.id, name: n.name, collectionId: n.collectionId, activeEntryId: n.activeEntryId }),
+    limit,
+  );
   console.log(JSON.stringify({ results, count: results.length, ...(truncated ? { truncated: true } : {}) }, null, 2));
 }
 
@@ -640,23 +626,13 @@ export async function cmdDeleteSessions(ids: string[]) {
 
 export async function cmdReplayCollections(limit?: number) {
   const client = await getClient();
-  const cap = limit && limit > 0 ? limit : 2000;
-  const results: any[] = [];
-  let after: string | undefined;
-  let truncated = false;
-  while (results.length < cap) {
-    const want = Math.min(100, cap - results.length);
-    const page = after
-      ? await client.replay.collections.list().after(after).first(want)
-      : await client.replay.collections.list().first(want);
-    for (const e of page.edges) {
-      results.push({ id: e.node.id, name: e.node.name });
-    }
-    if (!page.pageInfo.hasNextPage) break;
-    if (results.length >= cap) { truncated = true; break; }
-    after = page.pageInfo.endCursor;
-  }
-
+  const { results, truncated } = await paginateSdkList(
+    (after, want) => after
+      ? client.replay.collections.list().after(after).first(want)
+      : client.replay.collections.list().first(want),
+    (n: any) => ({ id: n.id, name: n.name }),
+    limit,
+  );
   console.log(JSON.stringify({ results, count: results.length, ...(truncated ? { truncated: true } : {}) }, null, 2));
 }
 

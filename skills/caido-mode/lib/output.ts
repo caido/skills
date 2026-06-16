@@ -7,6 +7,18 @@ export function decodeRaw(raw: Uint8Array | undefined): string {
   return new TextDecoder().decode(raw);
 }
 
+/** Split a raw HTTP message at the first blank line. Returns headerBlock, body (undefined = no separator found), and the separator string. */
+export function splitRaw(raw: string): { headerBlock: string; body: string | undefined; sep: "\r\n\r\n" | "\n\n" | undefined } {
+  const idxCrlf = raw.indexOf("\r\n\r\n");
+  const idxLf = raw.indexOf("\n\n");
+  if (idxCrlf >= 0 && (idxLf < 0 || idxCrlf <= idxLf)) {
+    return { headerBlock: raw.slice(0, idxCrlf), body: raw.slice(idxCrlf + 4), sep: "\r\n\r\n" };
+  } else if (idxLf >= 0) {
+    return { headerBlock: raw.slice(0, idxLf), body: raw.slice(idxLf + 2), sep: "\n\n" };
+  }
+  return { headerBlock: raw, body: undefined, sep: undefined };
+}
+
 export function extractHeaders(decoded: string): string {
   const doubleCrlf = decoded.indexOf("\r\n\r\n");
   const doubleLf = decoded.indexOf("\n\n");

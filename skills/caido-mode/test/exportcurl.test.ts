@@ -2,9 +2,9 @@
  * Tests for `export-curl --config` (buildAuthConfig).
  * Run: npm test
  *
- * Regression coverage for two real bugs found testing Gemini/Spark:
- *   1. a narrow header allowlist dropped app-specific auth headers (x-goog-ext-*,
- *      X-Browser-Validation, Origin/Referer/X-Same-Domain) → PERMISSION_DENIED.
+ * Regression coverage for two real bugs found during testing:
+ *   1. a narrow header allowlist dropped app-specific auth headers (x-custom-ext-*,
+ *      X-Browser-Validation, Origin/Referer/X-Same-Domain) → request rejection.
  *   2. an always-on cookie-jar wrote rotated Set-Cookie back over the good cookies.
  */
 
@@ -22,26 +22,26 @@ test("export-curl (full command): adds --compressed and drops Accept-Encoding, k
   assert.match(curl, /Authorization: tok/);          // real headers preserved
 });
 
-// A request shaped like a Gemini "batchexecute" RPC.
+// A request shaped like a typical authenticated JSON-RPC POST with app-specific headers.
 const RAW = [
-  "POST /_/BardChatUi/data/batchexecute?rpcids=abc HTTP/1.1",
-  "Host: gemini.google.com",
+  "POST /api/data/rpc?method=query HTTP/1.1",
+  "Host: api.example.com",
   "Content-Length: 42",
   "Content-Type: application/x-www-form-urlencoded;charset=UTF-8",
   "Accept-Encoding: gzip, deflate, br",
   "Connection: keep-alive",
   "User-Agent: Mozilla/5.0",
-  "Authorization: SAPISIDHASH abc",
-  "Origin: https://gemini.google.com",
-  "Referer: https://gemini.google.com/app",
+  "Authorization: BEARER abc123",
+  "Origin: https://api.example.com",
+  "Referer: https://api.example.com/app",
   "X-Same-Domain: 1",
   "X-Browser-Validation: deadbeef",
   "X-Client-Data: CIa2yQEI",
-  "x-goog-ext-525001261-jspb: [1,null,0]",
-  "x-goog-ext-73010989-jspb: [\"en\"]",
+  "x-custom-ext-525001261-jspb: [1,null,0]",
+  "x-custom-ext-73010989-jspb: [\"en\"]",
   "Cookie: __Secure-1PSID=A; __Secure-1PSIDCC=B; SIDCC=C",
   "",
-  "f.req=%5B%5D&at=xyz",
+  "data=%5B%5D&token=xyz",
 ].join("\r\n");
 
 function configHeaders(cfg: string): string[] {
@@ -49,19 +49,19 @@ function configHeaders(cfg: string): string[] {
 }
 
 test("captures app-specific auth headers the old allowlist dropped", () => {
-  const { configText } = buildAuthConfig(RAW, "gemini.google.com", 443, true, "http://p");
+  const { configText } = buildAuthConfig(RAW, "api.example.com", 443, true, "http://p");
   const hdrs = configHeaders(configText).map((h) => h.toLowerCase());
   for (const need of [
     "user-agent", "authorization", "origin", "referer", "x-same-domain",
     "x-browser-validation", "x-client-data",
-    "x-goog-ext-525001261-jspb", "x-goog-ext-73010989-jspb",
+    "x-custom-ext-525001261-jspb", "x-custom-ext-73010989-jspb",
   ]) {
     assert.ok(hdrs.includes(need), `expected captured header: ${need}`);
   }
 });
 
 test("drops volatile/per-request/curl-managed headers", () => {
-  const { configText } = buildAuthConfig(RAW, "gemini.google.com", 443, true, "http://p");
+  const { configText } = buildAuthConfig(RAW, "api.example.com", 443, true, "http://p");
   const hdrs = configHeaders(configText).map((h) => h.toLowerCase());
   for (const skip of ["host", "content-length", "content-type", "accept-encoding", "connection"]) {
     assert.ok(!hdrs.includes(skip), `header should be dropped: ${skip}`);
@@ -76,7 +76,7 @@ test("proxy + insecure + compressed directives present", () => {
 });
 
 test("cookies are inline + static by default (no jar, no drift)", () => {
-  const r = buildAuthConfig(RAW, "gemini.google.com", 443, true, "http://p");
+  const r = buildAuthConfig(RAW, "api.example.com", 443, true, "http://p");
   assert.equal(r.cookieMode, "inline");
   assert.equal(r.jarText, undefined);
   assert.match(r.configText, /^header = "Cookie: __Secure-1PSID=A; __Secure-1PSIDCC=B; SIDCC=C"$/m);
@@ -85,7 +85,7 @@ test("cookies are inline + static by default (no jar, no drift)", () => {
 });
 
 test("--cookie-jar opts into a read/write jar", () => {
-  const r = buildAuthConfig(RAW, "gemini.google.com", 443, true, "http://p", { cookieJar: "/tmp/x/cookies.txt" });
+  const r = buildAuthConfig(RAW, "api.example.com", 443, true, "http://p", { cookieJar: "/tmp/x/cookies.txt" });
   assert.equal(r.cookieMode, "jar");
   assert.match(r.configText, /^cookie = "\/tmp\/x\/cookies\.txt"$/m);
   assert.match(r.configText, /^cookie-jar = "\/tmp\/x\/cookies\.txt"$/m);

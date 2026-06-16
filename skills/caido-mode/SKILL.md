@@ -549,8 +549,3 @@ lib/
 - **curl can't connect via proxy** → confirm the proxy with `auth-status`; Caido must be running.
 - **Connection refused / not ready** → Caido isn't up or is still starting; check `health`.
 
-## Related skills
-
-- `hacking` — offensive workflow conventions (cookies, sessions, tooling)
-- `bugbounty-report` — turn a confirmed finding into a report
-- `JsAnalyzer` / `waymore` / `spider` — recon feeding into Caido history

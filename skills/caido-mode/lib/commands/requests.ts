@@ -1,7 +1,7 @@
 /** HTTP History commands: search, recent, get, get-response, raw, export-curl */
 
 import { getClient, resolveProxy } from "../client";
-import { decodeRaw, formatHttpRaw, rawToCurl, CURL_MANAGED_HEADERS } from "../output";
+import { decodeRaw, formatHttpRaw, rawToCurl, splitRaw, CURL_MANAGED_HEADERS } from "../output";
 import type { OutputOpts } from "../types";
 
 /** Terse one-line-per-request rendering for fast, low-token browsing. */
@@ -223,8 +223,7 @@ interface AuthConfigResult {
 const SKIP_HEADERS = new Set([...CURL_MANAGED_HEADERS, "content-type"]);
 
 function parseRawHeaders(raw: string): Array<{ name: string; value: string }> {
-  const sep = raw.indexOf("\r\n\r\n") >= 0 ? "\r\n\r\n" : "\n\n";
-  const headerBlock = raw.split(sep)[0];
+  const { headerBlock } = splitRaw(raw);
   const lines = headerBlock.split(/\r?\n/).slice(1); // drop the request line
   const out: Array<{ name: string; value: string }> = [];
   for (const line of lines) {
@@ -257,7 +256,7 @@ function buildCookieJar(cookieValue: string, host: string): { text: string; coun
  *
  * - Captures ALL request headers except the volatile/per-request denylist, so
  *   nothing auth-relevant is missed (the old curated allowlist dropped headers
- *   like x-goog-ext-*, X-Browser-Validation, Origin/Referer → PERMISSION_DENIED).
+ *   like x-custom-ext-*, X-Browser-Validation, Origin/Referer → request rejection).
  * - Cookies are inlined STATICALLY by default (no cookie-jar), so curl never
  *   writes drifting/rotated Set-Cookie values back over the captured-good set.
  *   Pass `opts.cookieJar` to opt into the read+write jar (rotation capture).
