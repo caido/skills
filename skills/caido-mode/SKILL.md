@@ -315,10 +315,11 @@ optional **condition** (HTTPQL scope) and **sources**:
 | **condition** | `--condition '<httpql>'` — only apply when the request matches (e.g. one host) |
 | **sources** | `--sources INTERCEPT,REPLAY,…` — which traffic it applies to |
 
-Three gotchas, all defaulted for you:
+Four gotchas, all defaulted for you:
 - **New rules are created DISABLED.** Enable with `toggle-mr-rule <id> --on`.
 - **Default collection** is Caido's "Default Collection" (override with `--collection <name|id>`).
 - **Default sources** is `INTERCEPT` (proxy traffic), matching Caido. Add `--sources` to broaden.
+- **JS targets — pick matcher based on what you're matching against.** `--match-value` is fine for stable literals (string constants, JSON keys, fixed API paths). Use `--match-regex` when matching near minified identifiers: symbol names rotate on every bundle deploy (e.g. `_.ex` → `_.Ww`), so a literal rule silently stops matching with no error. Anchor the regex to structurally stable neighbours — surrounding string literals, known function names, fixed JSON keys — rather than the minified identifier itself.
 
 **Preview before committing:** `test-mr-rule` applies a rule to a raw request *without creating
 anything* — use it to confirm a rule does what you expect.
