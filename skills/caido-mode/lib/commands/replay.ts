@@ -25,7 +25,7 @@ export interface ConnectionOverrides {
  */
 export type NameChange = { kind: "keep" } | { kind: "rename"; name: string };
 
-interface RawEdits {
+export interface RawEdits {
   method?: string;
   path?: string;
   setHeaders: string[];
@@ -91,7 +91,7 @@ export function ensureHeaderCrlf(raw: string): string {
   return body === undefined ? headers : headers + "\r\n\r\n" + body;
 }
 
-function applyRawEdits(raw: string, edits: RawEdits): string {
+export function applyRawEdits(raw: string, edits: RawEdits): string {
   for (const rep of edits.replacements) {
     const [from, to] = rep.split(":::");
     if (from && to !== undefined) raw = raw.replaceAll(from, to);

@@ -126,7 +126,9 @@ export function rawToCurl(rawRequest: string, host: string, port: number, isTls:
 
   const body = lines.slice(i + 1).join("\n").trim();
   if (body) {
-    parts.push(`  -d ${shQuote(body)}`);
+    // --data-raw (not -d): a body starting with '@' must be sent literally, not
+    // treated by curl as a "read this file" instruction.
+    parts.push(`  --data-raw ${shQuote(body)}`);
   }
 
   return parts.join(" \\\n");

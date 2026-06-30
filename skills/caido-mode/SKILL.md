@@ -177,8 +177,7 @@ npx tsx caido-client.ts health             # verify instance is up
 
 `setup` validates the PAT via the SDK's device-code flow (auto-approved by the PAT), then caches
 the PAT + access token (+ proxy) to `~/.claude/config/secrets.json`. Subsequent runs use the
-cached token; a valid cached token works even without the PAT. If authorization isn't working, the
-environment also provides `CAIDO_TEAM_PAT` and `CAIDO_PERSONAL_PAT`.
+cached token; a valid cached token works even without the PAT.
 
 ### Multiple Caido instances
 
