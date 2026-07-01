@@ -115,11 +115,11 @@ Usage:
  HTTP HISTORY & TESTING
 ═══════════════════════════════════════════════
 
-  search <filter>              Search requests using HTTPQL
+  search <filter>              Search requests using HTTPQL — NEWEST FIRST by default
     --limit <n>                Max results (default: 20)
     --after <cursor>           Pagination cursor
     --ids-only                 Output only request IDs
-    --recent / --desc          Sort newest first by request ID
+    --asc / --oldest           Sort OLDEST first (default is newest first)
     --compact                  Terse one-line-per-request output (low token)
 
   recent                       Get recent requests
@@ -419,12 +419,14 @@ async function main() {
       let limit = 20;
       let after: string | undefined;
       let idsOnly = false;
-      let desc = false;
+      let desc = true;  // newest-first by default — see cmdSearch
       let compact = false;
       for (let i = 2; i < args.length; i++) {
         if (args[i] === "--limit" && args[i + 1]) { limit = parseInt(args[i + 1], 10); i++; }
         else if (args[i] === "--after" && args[i + 1]) { after = args[i + 1]; i++; }
         else if (args[i] === "--ids-only") { idsOnly = true; }
+        else if (args[i] === "--asc" || args[i] === "--ascending" || args[i] === "--oldest") { desc = false; }
+        // --desc/--latest/--recent are now the default; still accepted so old invocations don't break.
         else if (args[i] === "--desc" || args[i] === "--latest" || args[i] === "--recent") { desc = true; }
         else if (args[i] === "--compact") { compact = true; }
       }

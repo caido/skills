@@ -10,9 +10,14 @@ function compactLine(r: { id: string; method: string; host: string; path: string
   return `${r.id}\t${status}\t${r.method} ${r.host}${r.path}${r.query ? "?" + r.query : ""}`;
 }
 
-export async function cmdSearch(filter: string, limit: number, after?: string, idsOnly?: boolean, desc?: boolean, compact?: boolean) {
+export async function cmdSearch(filter: string, limit: number, after?: string, idsOnly?: boolean, desc: boolean = true, compact?: boolean) {
   const client = await getClient();
   let builder = client.request.list().filter(filter).first(limit);
+  // The SDK's list() defaults to ASCENDING by id (oldest first), so .first(limit)
+  // would return the oldest N matches. We default to descending (newest first) —
+  // the near-universal intent — so callers get the latest traffic without a
+  // client-side sort (which, on a truncated result set, silently misses newer
+  // requests beyond the limit). Pass desc=false (CLI --asc/--oldest) for oldest-first.
   if (desc) builder = builder.descending("req", "id");
   if (after) builder = builder.after(after);
 
