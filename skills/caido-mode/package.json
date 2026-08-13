@@ -1,10 +1,11 @@
 {
   "name": "caido-mode",
-  "version": "3.0.1",
-  "description": "Full Caido SDK CLI for Claude Code - search, replay, edit requests, manage findings, scopes, filters, and more",
+  "version": "3.2.0",
+  "description": "Full Caido SDK CLI for Claude Code - search history, test via curl-through-Caido, replay, edit, match & replace (tamper) rules, findings, scopes, filters, and more",
   "type": "module",
   "scripts": {
-    "caido": "tsx caido-client.ts"
+    "caido": "tsx caido-client.ts",
+    "test": "node --import tsx --test test/*.test.ts"
   },
   "dependencies": {
     "@caido/sdk-client": "^0.4.0",

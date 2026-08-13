@@ -7,6 +7,18 @@ export function decodeRaw(raw: Uint8Array | undefined): string {
   return new TextDecoder().decode(raw);
 }
 
+/** Split a raw HTTP message at the first blank line. Returns headerBlock, body (undefined = no separator found), and the separator string. */
+export function splitRaw(raw: string): { headerBlock: string; body: string | undefined; sep: "\r\n\r\n" | "\n\n" | undefined } {
+  const idxCrlf = raw.indexOf("\r\n\r\n");
+  const idxLf = raw.indexOf("\n\n");
+  if (idxCrlf >= 0 && (idxLf < 0 || idxCrlf <= idxLf)) {
+    return { headerBlock: raw.slice(0, idxCrlf), body: raw.slice(idxCrlf + 4), sep: "\r\n\r\n" };
+  } else if (idxLf >= 0) {
+    return { headerBlock: raw.slice(0, idxLf), body: raw.slice(idxLf + 2), sep: "\n\n" };
+  }
+  return { headerBlock: raw, body: undefined, sep: undefined };
+}
+
 export function extractHeaders(decoded: string): string {
   const doubleCrlf = decoded.indexOf("\r\n\r\n");
   const doubleLf = decoded.indexOf("\n\n");
@@ -61,7 +73,33 @@ export function truncateBody(decoded: string, maxLines: number, maxChars: number
   return headers + separator + body;
 }
 
-/** Build a curl command from raw HTTP request */
+/** Single-quote a value for safe pasting into a POSIX shell. */
+export function shQuote(s: string): string {
+  return `'${s.replace(/'/g, "'\\''")}'`;
+}
+
+/** Bracket an IPv6 literal host for use in a URL. */
+function urlHost(host: string): string {
+  return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+}
+
+/**
+ * Headers curl sets/manages itself per request/connection — inlining a captured
+ * copy is at best redundant and at worst breaks things (stale Content-Length →
+ * hang/duplicate; inlined Accept-Encoding without --compressed → unreadable gzip).
+ * Single source of truth shared by rawToCurl and the curl-config builder.
+ */
+export const CURL_MANAGED_HEADERS = new Set([
+  "host", "content-length", "accept-encoding", "connection",
+  "transfer-encoding", "proxy-connection", "keep-alive", "upgrade", "te",
+]);
+
+/**
+ * Build a curl command from a raw HTTP request.
+ * Every interpolated, request-derived value (URL, method, header name/value, body)
+ * is shell-quoted — these come from proxied traffic and the output is pasted into a shell.
+ * `--compressed` is added (and Accept-Encoding dropped) so responses are readable.
+ */
 export function rawToCurl(rawRequest: string, host: string, port: number, isTls: boolean): string {
   const lines = rawRequest.split(/\r?\n/);
   if (lines.length === 0) return "";
@@ -69,9 +107,9 @@ export function rawToCurl(rawRequest: string, host: string, port: number, isTls:
   const [method, path] = lines[0].split(" ");
   const scheme = isTls ? "https" : "http";
   const portSuffix = (isTls && port === 443) || (!isTls && port === 80) ? "" : `:${port}`;
-  const url = `${scheme}://${host}${portSuffix}${path}`;
+  const url = `${scheme}://${urlHost(host)}${portSuffix}${path ?? ""}`;
 
-  const parts = [`curl -X ${method} '${url}'`];
+  const parts = [`curl --compressed -X ${shQuote(method ?? "GET")} ${shQuote(url)}`];
 
   let i = 1;
   for (; i < lines.length; i++) {
@@ -81,15 +119,16 @@ export function rawToCurl(rawRequest: string, host: string, port: number, isTls:
     if (colonIdx > 0) {
       const name = line.substring(0, colonIdx).trim();
       const value = line.substring(colonIdx + 1).trim();
-      if (name.toLowerCase() === "host") continue;
-      if (name.toLowerCase() === "content-length") continue;
-      parts.push(`  -H '${name}: ${value}'`);
+      if (CURL_MANAGED_HEADERS.has(name.toLowerCase())) continue;
+      parts.push(`  -H ${shQuote(`${name}: ${value}`)}`);
     }
   }
 
   const body = lines.slice(i + 1).join("\n").trim();
   if (body) {
-    parts.push(`  -d '${body.replace(/'/g, "'\\''")}'`);
+    // --data-raw (not -d): a body starting with '@' must be sent literally, not
+    // treated by curl as a "read this file" instruction.
+    parts.push(`  --data-raw ${shQuote(body)}`);
   }
 
   return parts.join(" \\\n");
