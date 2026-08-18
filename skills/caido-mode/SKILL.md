@@ -437,6 +437,20 @@ npx tsx caido-client.ts create-finding 8431 --title "IDOR on /api/user/:id" \
 npx tsx caido-client.ts update-finding <id> --title "…" --description "…"
 ```
 
+### Evidence images — for report screenshots
+```bash
+npx tsx caido-client.ts evidence 8431 --out sqli-001-evidencia.png \
+  --note "JWT decoded: role=admin, id=1"
+```
+Renders a Caido-style Request/Response panel (dark theme, syntax-highlighted) to a PNG, for
+pasting into a pentest report. This is **not** a screenshot of the real Caido UI — that requires
+interactive login, which is never automated/bypassed. It's a faithful re-render of the real
+request/response bytes (same data `get`/`raw` return), captured with headless Chrome via raw CDP
+(`google-chrome`/`chromium` must be on `PATH`; no extra npm dependency). If a report needs to be
+explicit about provenance, say "evidence rendered from real Caido data", not "screenshot of the
+UI". `--note` (repeatable) adds an extra comment line under the Response pane — handy for a
+decoded JWT payload or similar annotation that isn't literally in the raw bytes.
+
 ### Scopes / Filter presets / Environments
 ```bash
 npx tsx caido-client.ts create-scope "Target" --allow "*.target.com" --deny "*.cdn.target.com"
@@ -468,6 +482,7 @@ id**; output is JSON unless noted. Run `--help` for full flag lists.
 | `raw <id>` | Dump byte-exact raw request. `--out <file> --response` |
 | `export-curl <id>` | Full self-contained curl (for the user) |
 | `export-curl <id> --config` | Reusable `-K` config — faithful static snapshot of all auth headers + inline cookies (internal). `--out <file>` · `--cookie-jar` (follow rotation) · `--exclude <h>` |
+| `evidence <id> --out <file.png>` | Render a Caido-style Request/Response panel to a PNG for report evidence. `--note <text>` (repeatable) · `--width <px>` |
 | **Send / edit** | |
 | `replay <id> --name <n>` | Replay into a new named session. `--raw --collection` + connection overrides |
 | `send-raw --host <h> --raw <s\|@file\|-> --name <n>` | Send a raw request via a new named session. `--port --tls/--no-tls --collection` |
@@ -517,6 +532,7 @@ lib/
     intercept.ts         # intercept status/enable/disable
     matchreplace.ts      # match & replace (tamper) rules — buildTamperSection + commands
     info.ts              # viewer, plugins, health, setup, auth-status
+    evidence.ts          # evidence — Request/Response PNG for reports (raw CDP, no Puppeteer)
 ```
 
 ---
