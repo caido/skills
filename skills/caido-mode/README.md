@@ -15,6 +15,7 @@ Cookies and auth tokens are huge. Instead of copy-pasting 2KB of session cookies
 |----------|----------|
 | **HTTP History** | `search`, `recent`, `get`, `get-response`, `raw`, `export-curl` |
 | **curl testing** | `export-curl` (full command), `export-curl --config` (faithful static `-K` config: all auth headers + cookies), `raw` (dump bytes) |
+| **Report evidence** | `evidence` (Request/Response panel → PNG, dark theme, syntax-highlighted) |
 | **Edit & Replay** | `edit`, `replay`, `send-raw`, `edit-session` |
 | **Replay Tab Lookup** | `get-session`, `replay-entries`, `session-entries` |
 | **Sessions** | `create-session`, `rename-session`, `move-session`, `sessions`, `delete-sessions` |
@@ -79,6 +80,7 @@ lib/
     intercept.ts         # intercept-status, intercept-enable, intercept-disable
     matchreplace.ts      # match & replace (tamper) rules — all sections/operations + test-mr-rule
     info.ts              # viewer, plugins, health, setup, auth-status
+    evidence.ts          # evidence — Request/Response PNG for reports (raw CDP, no Puppeteer)
 ```
 
 ## Usage
@@ -105,6 +107,22 @@ npx tsx caido-client.ts get-response <request-id>
 # Dump raw bytes to a file (e.g. seed a request body)
 npx tsx caido-client.ts raw <request-id> --out /tmp/caido/target.com/body.json
 ```
+
+### Report evidence
+
+Render a Caido-style Request/Response panel (dark theme, syntax-highlighted) to a PNG, for a
+pentest report — without needing an interactive login to the real Caido UI:
+
+```bash
+npx tsx caido-client.ts evidence <request-id> --out sqli-001-evidencia.png \
+  --note "JWT decoded: role=admin, id=1"
+```
+
+Uses the real request/response bytes (same data `get`/`raw` return) rendered into a lookalike
+page and captured with headless Chrome via raw CDP — `google-chrome` or `chromium` must be on
+`PATH`; no extra npm dependency (no Puppeteer). `--note` is repeatable. If a report needs to be
+explicit about provenance, describe it as "evidence rendered from real Caido data" rather than
+implying it's a literal screenshot of the UI.
 
 ### Primary testing workflow (curl through Caido)
 
