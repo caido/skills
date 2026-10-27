@@ -257,6 +257,28 @@ npx tsx caido-client.ts edit 8431 --path /api/admin --session "IDOR victim 999" 
 `--set-header`, `--remove-header`, `--body` (auto Content-Length), `--replace <from>:::<to>`, and
 connection overrides (`--sni`, `--connect-host`, …).
 
+### Session kinds
+
+Every command that reads a session reports a `kind` field. It names what this CLI
+models, which is not always what the server calls the type:
+
+| `kind` | What it is | Needs |
+|--------|------------|-------|
+| `HTTP` | One request and its response. This is what the testing workflow uses. | any version |
+| `WS` | A WebSocket upgrade plus the messages on the resulting stream. `replay-entries` lists those messages, each with an `encoding` of `utf-8` for TEXT frames or `base64` for binary ones. | Caido 0.57+ |
+| `HTTP_ONE_PIPELINE` | Several requests dispatched together under a strategy (sequential, last-byte synchronization, or single packet attack). Its entries carry nested `httpEntries`. | Caido 0.58.x only |
+| `UNKNOWN` | A kind this CLI does not model, reported with the server-side type name in a `typename` field. | any version |
+
+Caido renamed the pipeline types in 0.59.0: `ReplaySessionHttpOnePipeline` became
+`ReplaySessionHttpPipeline`, and the kind `HTTP_ONE_PIPELINE` became `HTTP_PIPELINE`.
+This CLI models only the 0.58.x shape, so on 0.59 and later a pipeline session is
+reported as `UNKNOWN` with `typename: "ReplaySessionHttpPipeline"`. It still lists and
+reads, but it cannot be created or edited here.
+
+Only `HTTP` sessions can be edited as raw HTTP, so `edit-session` refuses the others
+with a message naming the kind rather than failing further in. When you list sessions,
+read the `kind` before assuming a session holds a single request.
+
 ### Inspecting an existing replay tab
 
 When a replay tab is already open in Caido and you want to work from its current state, look it
