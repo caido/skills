@@ -35,6 +35,33 @@ export function formatHttpRaw(decoded: string, opts: OutputOpts): string {
   return truncateBody(decoded, opts.maxBodyLines, opts.maxBodyChars);
 }
 
+/** Length-limit arbitrary content. Unlike truncateBody, nothing is treated as headers. */
+/** Length-limit arbitrary content. Unlike truncateBody, nothing is treated as headers. */
+export function truncateText(decoded: string, maxLines: number, maxChars: number): string {
+  const noLineLimit = maxLines <= 0;
+  const noCharLimit = maxChars <= 0;
+  if (noLineLimit && noCharLimit) return decoded;
+
+  const totalChars = decoded.length;
+  const totalLines = decoded.split("\n").length;
+  const notes: string[] = [];
+
+  let text = decoded;
+
+  if (!noLineLimit && totalLines > maxLines) {
+    text = text.split("\n").slice(0, maxLines).join("\n");
+    notes.push(`[TRUNCATED at ${maxLines} lines, total ${totalLines}]`);
+  }
+
+  if (!noCharLimit && text.length > maxChars) {
+    text = text.substring(0, maxChars);
+    notes.push(`[TRUNCATED at ${maxChars} chars, total ${totalChars}]`);
+  }
+
+  // Markers are appended last so neither limit can count or remove them.
+  return notes.length === 0 ? text : `${text}\n\n${notes.join("\n")}`;
+}
+
 export function truncateBody(decoded: string, maxLines: number, maxChars: number): string {
   const noLineLimit = maxLines <= 0;
   const noCharLimit = maxChars <= 0;
