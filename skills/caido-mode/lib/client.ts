@@ -1,7 +1,7 @@
 /**
  * Caido SDK client with URL-keyed (multi-instance) auth.
  *
- * Credentials live in ~/.claude/config/secrets.json under `.caido`, keyed by
+ * Credentials live in ~/.config/caido/secrets.json under `.caido`, keyed by
  * instance URL so two Caido instances on one machine never clobber each other:
  *
  *   "caido": {
@@ -21,7 +21,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "
 import { homedir } from "os";
 import { join, dirname } from "path";
 
-const SECRETS_PATH = join(homedir(), ".claude", "config", "secrets.json");
+const SECRETS_PATH = join(homedir(), ".config", "caido", "secrets.json");
 const DEFAULT_URL = "http://localhost:8080";
 
 /**

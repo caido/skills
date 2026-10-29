@@ -1,7 +1,7 @@
 {
   "name": "caido-mode",
   "version": "3.2.0",
-  "description": "Full Caido SDK CLI for Claude Code - search history, test via curl-through-Caido, replay, edit, match & replace (tamper) rules, findings, scopes, filters, and more",
+  "description": "Full Caido SDK CLI for coding agents - search history, test via curl-through-Caido, replay, edit, match & replace (tamper) rules, findings, scopes, filters, and more",
   "type": "module",
   "scripts": {
     "caido": "tsx caido-client.ts",
