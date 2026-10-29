@@ -52,7 +52,7 @@ npx tsx caido-client.ts recent --limit 1
 export CAIDO_PAT=<your-pat>
 ```
 
-The `setup` command uses the SDK's device code flow (auto-approved by your PAT) to obtain an access token, then saves the PAT and cached token to `~/.claude/config/secrets.json` via a custom `TokenCache` implementation. Subsequent runs load the cached token directly, and a valid cached token can be used even when the PAT is absent.
+The `setup` command uses the SDK's device code flow (auto-approved by your PAT) to obtain an access token, then saves the PAT and cached token to `~/.config/caido/secrets.json` via a custom `TokenCache` implementation. Subsequent runs load the cached token directly, and a valid cached token can be used even when the PAT is absent.
 
 **Multiple instances:** credentials are keyed by instance URL, so two Caido instances on one machine never clobber each other. `setup <pat> <url>` stores that instance (and makes it the active default); setting up a second URL adds it rather than overwriting. The active instance is `CAIDO_URL` env → stored default → `http://localhost:8080` — select per shell with `CAIDO_URL` (concurrency-safe). `auth-status` lists all configured instances and the active one.
 
@@ -320,15 +320,14 @@ Built on `@caido/sdk-client` v0.2.0+. Multi-file architecture with clean separat
 - **`client.graphql.query()`/`mutation()`** with `gql` tagged templates for features not yet in SDK (intercept, plugins, automate/fuzz, **match & replace**)
 - **No raw fetch anywhere** — everything goes through the SDK
 
-## Claude Code Integration
+## Agent Skill Integration
 
-This repo is designed to work as a [Claude Code skill](https://docs.anthropic.com/en/docs/claude-code). The `SKILL.md` file provides Claude with full context on how to use every command, HTTPQL syntax, and testing workflows.
+This repo works with any harness that supports agent skills. `SKILL.md` provides the commands, HTTPQL syntax, and testing workflows.
 
-To install as a skill:
+To install:
 
 ```bash
-cp -r . ~/.claude/skills/caido-mode/
-cd ~/.claude/skills/caido-mode && npm install
+pnpm dlx skills add caido/skills --skill caido-mode
 ```
 
 ## License
