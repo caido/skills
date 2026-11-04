@@ -82,18 +82,6 @@ export const START_AUTOMATE_TASK = gql`
 `;
 
 // ── Replay: create session with raw source ──
-// Caido 0.56+ types the inner raw field as Blob. SDK 0.2.0's sessions.create
-// still passes the raw string through unencoded, so we issue the mutation
-// ourselves with base64-encoded bytes for send-raw.
-
-export const CREATE_REPLAY_SESSION_RAW = gql`
-  mutation($input: CreateReplaySessionInput!) {
-    createReplaySession(input: $input) {
-      session { id name }
-    }
-  }
-`;
-
 // ── Plugins ──
 
 export const PLUGIN_PACKAGES_QUERY = gql`

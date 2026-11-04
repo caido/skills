@@ -257,6 +257,30 @@ npx tsx caido-client.ts edit 8431 --path /api/admin --session "IDOR victim 999" 
 `--set-header`, `--remove-header`, `--body` (auto Content-Length), `--replace <from>:::<to>`, and
 connection overrides (`--sni`, `--connect-host`, …).
 
+### Session kinds
+
+`sessions` and `get-session` report the session's kind as `kind`.
+`replay-entries` reports it as `sessionKind` at the top level, and each entry in
+that output carries its own `kind`.
+
+| `kind` | What it is | Needs |
+|--------|------------|-------|
+| `HTTP` | A session holding a history of entries, each one request and its response. `replay-entries` lists the history; `edit-session` adds another entry. | any version |
+| `WS` | A WebSocket upgrade plus the messages on the resulting stream. `replay-entries` lists those messages. With `--raw`, each message also gets a payload and an `encoding`: `utf-8` when the bytes are valid UTF-8 text, `base64` otherwise. Caido labels some control frames `TEXT`, so the encoding follows the bytes rather than the label. | Caido 0.57+ |
+| `HTTP_PIPELINE` | Several requests dispatched together under a strategy (sequential, last-byte synchronization, or single packet attack). Its entries carry nested `httpEntries`. | Caido 0.58+ |
+| `UNKNOWN` | A kind this CLI does not model. It appears in `sessions` and `get-session`, where `get-session` adds the server-side `typename`. `replay-entries` exits instead of reading its entries. | any version |
+
+Caido renamed the pipeline types in 0.59.0, from `ReplaySessionHttpOnePipeline` to
+`ReplaySessionHttpPipeline`. The SDK maps both onto the single kind `HTTP_PIPELINE`,
+so this CLI reports the same value whichever version you are on.
+
+Base64 payloads stay valid when they are cut short: the value is cut on a
+4-character boundary and the marker goes in a separate `truncated` field.
+
+Only `HTTP` sessions can be edited as raw HTTP, so `edit-session` refuses the others
+with a message naming the kind rather than failing further in. When you list sessions,
+read the `kind` before assuming a session holds a single request.
+
 ### Inspecting an existing replay tab
 
 When a replay tab is already open in Caido and you want to work from its current state, look it
