@@ -1,12 +1,11 @@
 /** Replay, Edit, Sessions, Collections, Automate/Fuzz commands */
 
 import { getClient } from "../client";
-import { decodeRaw, formatHttpRaw, splitRaw } from "../output";
+import { decodeRaw, formatHttpRaw, splitRaw, truncateText } from "../output";
 import {
   CREATE_AUTOMATE_SESSION,
   GET_AUTOMATE_SESSION,
   START_AUTOMATE_TASK,
-  CREATE_REPLAY_SESSION_RAW,
 } from "../graphql";
 import type { OutputOpts } from "../types";
 import type { ConnectionInfoInput } from "@caido/sdk-client";
@@ -253,20 +252,11 @@ async function createRawReplaySession(
   collectionId?: string,
 ) {
   // A session built from scratch must never carry bare-LF header endings.
-  raw = ensureHeaderCrlf(raw);
-  const input: Record<string, any> = {
-    kind: "HTTP", // required since Caido 0.57 (ReplaySessionKind)
-    requestSource: {
-      raw: {
-        connectionInfo: connection,
-        raw: Buffer.from(raw, "utf-8").toString("base64"),
-      },
-    },
-  };
-  if (collectionId) input.collectionId = collectionId;
-
-  const createResult = await client.graphql.mutation(CREATE_REPLAY_SESSION_RAW, { input });
-  return (createResult as any).createReplaySession.session;
+  return client.replay.sessions.create({
+    kind: "HTTP",
+    requestSource: { raw: ensureHeaderCrlf(raw), connection },
+    ...(collectionId ? { collectionId } : {}),
+  });
 }
 
 // -- Replay --
@@ -404,13 +394,18 @@ export async function cmdGetSession(sessionIdOrName: string, opts: OutputOpts) {
 
   const output: Record<string, any> = {
     id: session.id,
+    kind: session.kind,
     name: session.name,
     collectionId: session.collectionId,
     activeEntryId: session.activeEntryId,
+    ...(session.settings ? { settings: session.settings } : {}),
+    ...(session.strategy ? { strategy: session.strategy } : {}),
+    ...(session.typename ? { typename: session.typename } : {}),
   };
 
-  if (session.activeEntryId) {
-    const entry = await client.replay.entries.get(session.activeEntryId);
+  // "UNKNOWN" is not a kind the server accepts.
+  if (session.activeEntryId && session.kind !== "UNKNOWN") {
+    const entry = await client.replay.entries.get(session.activeEntryId, session.kind);
     if (entry) output.activeEntry = formatReplayEntry(entry, opts, true);
   }
 
@@ -430,6 +425,11 @@ export async function cmdReplayEntries(
     process.exit(1);
   }
 
+  if (session.kind === "UNKNOWN") {
+    console.error(`Session "${session.name}" has kind ${session.typename}, which this CLI cannot read entries for.`);
+    process.exit(1);
+  }
+
   const connection = await session.entries()
     .includeRaw(includeRaw ? { request: true, response: true, replay: true } : false)
     .first(limit);
@@ -438,6 +438,7 @@ export async function cmdReplayEntries(
 
   console.log(JSON.stringify({
     sessionId: session.id,
+    sessionKind: session.kind,
     sessionName: session.name,
     activeEntryId: session.activeEntryId,
     results,
@@ -459,12 +460,17 @@ export async function cmdEditSession(
     process.exit(1);
   }
 
+  if (session.kind !== "HTTP") {
+    console.error(`Session "${session.name}" is a ${session.kind} session; only HTTP sessions can be edited as raw HTTP.`);
+    process.exit(1);
+  }
+
   if (!session.activeEntryId) {
     console.error(`Session ${session.id} has no active entry`);
     process.exit(1);
   }
 
-  const entry = await client.replay.entries.get(session.activeEntryId);
+  const entry = await client.replay.entries.get(session.activeEntryId, session.kind);
   if (!entry?.raw) {
     console.error(`Could not get raw data for active entry ${session.activeEntryId}`);
     process.exit(1);
@@ -489,9 +495,35 @@ export async function cmdEditSession(
   console.log(JSON.stringify({ sessionName, ...buildReplayOutput(session.id, result, opts, modifiedRaw) }, null, 2));
 }
 
+export function formatWsPayload(format: string, raw: Uint8Array, opts: OutputOpts) {
+  // Caido labels some control frames TEXT, so trust the bytes, not the label.
+  if (format === "TEXT") {
+    const text = decodeRaw(raw);
+    if (Buffer.from(text, "utf-8").equals(Buffer.from(raw))) {
+      return {
+        encoding: "utf-8",
+        raw: truncateText(text, opts.maxBodyLines, opts.maxBodyChars),
+      };
+    }
+  }
+
+  // Cut on a 4-character boundary so the value stays decodable.
+  const base64 = Buffer.from(raw).toString("base64");
+  const limit = opts.maxBodyChars > 0 ? Math.floor(opts.maxBodyChars / 4) * 4 : 0;
+  if (limit === 0 || base64.length <= limit) {
+    return { encoding: "base64", raw: base64 };
+  }
+  return {
+    encoding: "base64",
+    raw: base64.slice(0, limit),
+    truncated: `[TRUNCATED at ${limit} chars, total ${base64.length}]`,
+  };
+}
+
 function formatReplayEntry(entry: any, opts: OutputOpts, includeRaw: boolean) {
   const output: Record<string, any> = {
     id: entry.id,
+    kind: entry.kind,
     sessionId: entry.sessionId,
     createdAt: entry.createdAt,
     error: entry.error,
@@ -521,6 +553,29 @@ function formatReplayEntry(entry: any, opts: OutputOpts, includeRaw: boolean) {
       roundtrip: entry.response.roundtripTime,
       length: entry.response.length,
     };
+  }
+
+  if (entry.kind === "WS") {
+    output.stream = entry.stream ? { id: entry.stream.id, host: entry.stream.host, port: entry.stream.port, path: entry.stream.path, isTls: entry.stream.isTls } : undefined;
+    output.messages = (entry.messages ?? []).map((m: any) => ({
+      id: m.id,
+      direction: m.direction,
+      format: m.format,
+      length: m.length,
+      createdAt: m.createdAt,
+      // A frame is payload, not HTTP, and only TEXT frames are UTF-8.
+      ...(includeRaw && m.raw ? formatWsPayload(m.format, m.raw, opts) : {}),
+    }));
+  }
+
+  if (entry.kind === "UNKNOWN") {
+    output.typename = entry.typename;
+  }
+
+  if (entry.kind === "HTTP_PIPELINE") {
+    output.strategy = entry.strategy;
+    output.activeHttpEntryId = entry.activeHttpEntry?.id;
+    output.httpEntries = (entry.httpEntries ?? []).map((e: any) => formatReplayEntry(e, opts, includeRaw));
   }
 
   if (includeRaw) {
@@ -567,7 +622,7 @@ export async function cmdReplaySessions(limit?: number) {
     (after, want) => after
       ? client.replay.sessions.list().after(after).first(want)
       : client.replay.sessions.list().first(want),
-    (n: any) => ({ id: n.id, name: n.name, collectionId: n.collectionId, activeEntryId: n.activeEntryId }),
+    (n: any) => ({ id: n.id, kind: n.kind, name: n.name, collectionId: n.collectionId, activeEntryId: n.activeEntryId }),
     limit,
   );
   console.log(JSON.stringify({ results, count: results.length, ...(truncated ? { truncated: true } : {}) }, null, 2));
