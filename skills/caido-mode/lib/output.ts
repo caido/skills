@@ -1,6 +1,66 @@
 /** Output formatting helpers for raw HTTP data */
 
 import type { OutputOpts } from "./types";
+import { writeFile, mkdir, rename, chmod, unlink } from "node:fs/promises";
+import { dirname } from "node:path";
+import { randomUUID } from "node:crypto";
+
+export interface ResultOutputOpts {
+  output?: string;
+  maxBodyChars?: number;
+}
+
+export async function printResult(value: unknown, opts: ResultOutputOpts = {}): Promise<void> {
+  if (opts.output) {
+    await atomicJson(opts.output, bounded(value, { "max-body-chars": 0 }));
+    console.log(JSON.stringify({ outputFile: opts.output }, null, 2));
+  } else {
+    console.log(JSON.stringify(bounded(value, { "max-body-chars": opts.maxBodyChars }), null, 2));
+  }
+}
+
+export async function atomicJson(path: string, data: unknown): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  const tmp = path + "." + randomUUID() + ".tmp";
+  try {
+    await writeFile(tmp, JSON.stringify(data, null, 2), { mode: 0o600 });
+    await rename(tmp, path);
+    await chmod(path, 0o600).catch(() => {});
+  } catch (error) {
+    await unlink(tmp).catch(() => {});
+    throw error;
+  }
+}
+
+export function bounded(value: unknown, opts: { "max-body-chars"?: number } = {}): unknown {
+  const cap = opts["max-body-chars"] ?? 5000;
+  if (!Number.isInteger(cap) || cap < 0 || cap > 1000000) throw new Error("Body limit must be an integer 0..1000000");
+  function walk(v: unknown, key = ""): unknown {
+    if (v instanceof Uint8Array) return walk({ encoding: "base64", data: Buffer.from(v).toString("base64") });
+    if (v instanceof Date) return v.toISOString();
+    if (typeof v === "bigint") return v.toString();
+    if (cap > 0 && typeof v === "string" && /raw|body|output|data/i.test(key) && v.length > cap)
+      return { text: v.slice(0, cap), truncated: true, totalChars: v.length };
+    if (Array.isArray(v)) return v.map(item => walk(item, key));
+    if (v && typeof v === "object") {
+      return Object.fromEntries(Object.entries(v)
+        .map(([name, item]) => [name, walk(item, name)]));
+    }
+    return v;
+  }
+  return walk(value);
+}
+
+/** Preserve binary WebSocket payloads without decoding them as UTF-8. */
+export function decodeStreamFrames(value: any, includeRaw: boolean): any {
+  if (Array.isArray(value)) return value.map(item => decodeStreamFrames(item, includeRaw));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+      key, key === "raw" && includeRaw ? { encoding: "base64", data: item } : decodeStreamFrames(item, includeRaw),
+    ]));
+  }
+  return value;
+}
 
 export function decodeRaw(raw: Uint8Array | undefined): string {
   if (!raw || raw.length === 0) return "";
