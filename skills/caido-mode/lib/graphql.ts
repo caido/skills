@@ -5,6 +5,17 @@
 
 import gql from "graphql-tag";
 
+// Select only current network fields. SDK settings fragments can include removed AI providers.
+export const NETWORK_SETTINGS_QUERY = gql`
+  query { instanceSettings { network { stack } } }
+`;
+
+export const SET_NETWORK_SETTINGS = gql`
+  mutation SetNetworkSettings($input: SetInstanceSettingsInput!) {
+    setInstanceSettings(input: $input) { settings { network { stack } } }
+  }
+`;
+
 // ── Intercept ──
 // Caido 0.56+: InterceptRequest/ResponseOptions.filter is now a Query union
 // (HTTPQL | StreamQL) that needs subfields; Pause/ResumeInterceptPayload
@@ -12,6 +23,7 @@ import gql from "graphql-tag";
 
 export const INTERCEPT_OPTIONS_QUERY = gql`
   query {
+    interceptStatus
     interceptOptions {
       request {
         enabled
@@ -28,6 +40,7 @@ export const INTERCEPT_OPTIONS_QUERY = gql`
         }
       }
       scope { scopeId }
+      streamWs { enabled }
     }
   }
 `;
@@ -91,6 +104,20 @@ export const CREATE_REPLAY_SESSION_RAW = gql`
     createReplaySession(input: $input) {
       session { id name }
     }
+  }
+`;
+
+// These mutations intentionally select only the common ReplaySession fields.
+// The SDK's HTTP-only session fragment cannot deserialize pipeline/WS sessions.
+export const RENAME_REPLAY_SESSION = gql`
+  mutation($id: ID!, $name: String!) {
+    renameReplaySession(id: $id, name: $name) { session { id name } }
+  }
+`;
+
+export const MOVE_REPLAY_SESSION = gql`
+  mutation($id: ID!, $collectionId: ID!) {
+    moveReplaySession(id: $id, collectionId: $collectionId) { session { id name } }
   }
 `;
 

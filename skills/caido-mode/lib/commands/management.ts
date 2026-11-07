@@ -58,10 +58,13 @@ export async function cmdFilters() {
 
 export async function cmdCreateFilter(name: string, query: string, alias?: string) {
   const client = await getClient();
+  // Current Caido requires a non-empty slug even when the caller omits --alias.
+  const filterAlias = alias ?? name.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+  if (!filterAlias) throw new Error("--alias is required when the filter name has no a-z or 0-9 characters");
   const filter = await client.filter.create({
     name,
     clause: query,
-    alias,
+    alias: filterAlias,
   });
   console.log(JSON.stringify(filter, null, 2));
 }
@@ -154,6 +157,29 @@ export async function cmdSelectProject(projectId: string) {
   const client = await getClient();
   await client.project.select(projectId);
   console.log(JSON.stringify({ selected: projectId }, null, 2));
+}
+
+export async function cmdGetProject(projectId: string) {
+  const client = await getClient();
+  const project = (await client.project.list()).find(p => p.id === projectId);
+  if (!project) throw new Error(`Project ${projectId} not found`);
+  console.log(JSON.stringify(project, null, 2));
+}
+
+export async function cmdCreateProject(name: string, temporary = false) {
+  const client = await getClient();
+  console.log(JSON.stringify(await client.project.create({ name, temporary }), null, 2));
+}
+
+export async function cmdRenameProject(projectId: string, name: string) {
+  const client = await getClient();
+  console.log(JSON.stringify(await client.project.rename(projectId, name), null, 2));
+}
+
+export async function cmdDeleteProject(projectId: string) {
+  const client = await getClient();
+  await client.project.delete(projectId);
+  console.log(JSON.stringify({ deleted: projectId }, null, 2));
 }
 
 // ── Hosted Files ──

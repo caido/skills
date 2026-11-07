@@ -1,12 +1,12 @@
 /** Replay, Edit, Sessions, Collections, Automate/Fuzz commands */
 
 import { getClient } from "../client";
-import { decodeRaw, formatHttpRaw, splitRaw } from "../output";
+import { decodeRaw, formatHttpRaw, splitRaw, printResult, type ResultOutputOpts } from "../output";
 import {
   CREATE_AUTOMATE_SESSION,
-  GET_AUTOMATE_SESSION,
-  START_AUTOMATE_TASK,
   CREATE_REPLAY_SESSION_RAW,
+  RENAME_REPLAY_SESSION,
+  MOVE_REPLAY_SESSION,
 } from "../graphql";
 import type { OutputOpts } from "../types";
 import type { ConnectionInfoInput } from "@caido/sdk-client";
@@ -149,17 +149,167 @@ export function applyRawEdits(raw: string, edits: RawEdits): string {
   return hasBody ? head + lineEnd + lineEnd + bodyPart : head;
 }
 
+interface ReplayGraph {
+  types: Map<string, any>;
+  query(name: string, args: Record<string, any>, selection?: string): Promise<any>;
+}
+
+const nativeSessionClients = new WeakMap<object, Promise<ReplayGraph>>();
+const nativeSessionGraphs = new WeakMap<object, ReplayGraph>();
+
+async function replayGraph(client?: any): Promise<ReplayGraph> {
+  // Most HTTP commands never load discovery or read its cache. Only sessions the
+  // SDK cannot deserialize take this path (pipeline and WebSocket sessions).
+  const { getGraph } = await import("../capabilities");
+  return getGraph(client);
+}
+
+function concreteTypes(g: ReplayGraph, name: string): any[] {
+  const type = g.types.get(name);
+  if (!type) throw new Error(`Instance does not expose ${name}`);
+  return type.possibleTypes?.map((t: any) => g.types.get(t.name)) ?? [type];
+}
+
+/** Select variant fields only on the concrete types exposed by this instance. */
+export function replaySessionFields(g: ReplayGraph): string {
+  return `__typename id name ${concreteTypes(g, "ReplaySession").map((t) => {
+    const fields = new Set(t.fields?.map((f: any) => f.name));
+    const selection = [
+      fields.has("collection") ? "collection {id}" : "",
+      fields.has("activeEntry") ? "activeEntry {id}" : "",
+    ].filter(Boolean).join(" ");
+    return selection ? `... on ${t.name} {${selection}}` : "";
+  }).join(" ")}`;
+}
+
+function nativeSession(node: any, g: ReplayGraph): any {
+  if (!node) return undefined;
+  const session = {
+    id: node.id,
+    name: node.name,
+    collectionId: node.collection?.id,
+    activeEntryId: node.activeEntry?.id,
+    __typename: node.__typename,
+  };
+  nativeSessionGraphs.set(session, g);
+  return session;
+}
+
+/** Retain the SDK fast path for ordinary HTTP sessions and older Caido versions. */
+export async function getReplaySession(client: any, id: string, graphFactory = replayGraph): Promise<any> {
+  if (!nativeSessionClients.has(client)) {
+    try {
+      return await client.replay.sessions.get(id);
+    } catch (err) {
+      // SDK 0.5.2 assumes data.collection exists, but its GraphQL fragment only
+      // selects it on HTTP sessions. Transport/permission errors should surface.
+      if (!(err instanceof TypeError)) throw err;
+      nativeSessionClients.set(client, graphFactory(client));
+    }
+  }
+  const g = await nativeSessionClients.get(client)!;
+  return nativeSession(await g.query("replaySession", { id }, replaySessionFields(g)), g);
+}
+
+export async function getReplaySessionPage(client: any, after: string | undefined, first: number, graphFactory = replayGraph): Promise<any> {
+  if (!nativeSessionClients.has(client)) {
+    try {
+      return await (after
+        ? client.replay.sessions.list().after(after).first(first)
+        : client.replay.sessions.list().first(first));
+    } catch (err) {
+      if (!(err instanceof TypeError)) throw err;
+      nativeSessionClients.set(client, graphFactory(client));
+    }
+  }
+  const g = await nativeSessionClients.get(client)!;
+  const page = await g.query("replaySessions", { after, first },
+    `edges {node {${replaySessionFields(g)}}} pageInfo {hasNextPage endCursor}`);
+  return { ...page, edges: page.edges.map((e: any) => ({ ...e, node: nativeSession(e.node, g) })) };
+}
+
+async function renameReplaySession(client: any, id: string, name: string): Promise<void> {
+  const result = await client.graphql.mutation(RENAME_REPLAY_SESSION, { id, name });
+  if (!result.renameReplaySession?.session) throw new Error(`Replay session ${id} could not be renamed`);
+}
+
+/** Preserve the familiar HTTP output while adding the native pipeline/WS shapes. */
+export function replayEntryFields(g: ReplayGraph, includeRaw: boolean): string {
+  const http = `connection {host port isTLS SNI} ${includeRaw ? "raw" : ""}
+    request {id method host port path query isTls ${includeRaw ? "raw" : ""}
+      response {statusCode roundtripTime length ${includeRaw ? "raw" : ""}}}`;
+  return `__typename id createdAt error session {id} ${concreteTypes(g, "ReplayEntry").map((t) => {
+    const fields = new Set(t.fields?.map((f: any) => f.name));
+    if (fields.has("httpEntries"))
+      return `... on ${t.name} {httpEntries {id createdAt error session {id} ${http}}}`;
+    if (fields.has("messages"))
+      return `... on ${t.name} {http {id createdAt error session {id} ${http}}
+        stream {id} messages {id head {direction format length ${includeRaw ? "raw" : ""}}}}`;
+    if (fields.has("request")) return `... on ${t.name} {${http}}`;
+    return "";
+  }).join(" ")}`;
+}
+
+export function decodeReplayEntry(node: any): any {
+  if (!node) return undefined;
+  const decode = (value: any) => typeof value === "string" ? Buffer.from(value, "base64") : value;
+  return {
+    ...node,
+    sessionId: node.session?.id,
+    raw: decode(node.raw),
+    request: node.request ? { ...node.request, raw: decode(node.request.raw) } : undefined,
+    response: node.request?.response ? { ...node.request.response, raw: decode(node.request.response.raw) } : undefined,
+    ...(node.httpEntries ? { httpEntries: node.httpEntries.map(decodeReplayEntry) } : {}),
+    ...(node.http ? { http: decodeReplayEntry(node.http) } : {}),
+    ...(node.messages ? { messages: node.messages.map((m: any) => ({
+      id: m.id,
+      head: { ...m.head, ...(m.head?.raw !== undefined ? { raw: decode(m.head.raw) } : {}) },
+    })) } : {}),
+  };
+}
+
+export function replaySessionKind(g: ReplayGraph, typename: string): string {
+  if (typename === "ReplaySessionWs") return "WS";
+  if (!typename.includes("Pipeline")) return "HTTP";
+  const values = new Set(g.types.get("ReplaySessionKind")?.enumValues?.map((v: any) => v.name));
+  const kind = ["HTTP_PIPELINE", "HTTP_ONE_PIPELINE"].find((v) => values.has(v));
+  if (!kind) throw new Error("Instance does not expose a pipeline replay session kind");
+  return kind;
+}
+
+async function nativeReplayEntry(g: ReplayGraph, id: string, includeRaw: boolean, sessionType: string): Promise<any> {
+  const sessionKind = replaySessionKind(g, sessionType);
+  return decodeReplayEntry(await g.query("replayEntry", { id, sessionKind }, replayEntryFields(g, includeRaw)));
+}
+
+async function nativeSessionEntries(g: ReplayGraph, id: string, first: number, includeRaw: boolean): Promise<any> {
+  if (!Number.isInteger(first) || first < 0) throw new Error("Entry limit must be a nonnegative integer");
+  const fragments = concreteTypes(g, "ReplaySession")
+    .filter((t) => t.fields?.some((f: any) => f.name === "entries"))
+    .map((t) => `... on ${t.name} {entries(first: ${first}) {
+      edges {node {${replayEntryFields(g, includeRaw)}}} pageInfo {hasNextPage endCursor}
+    }}`).join(" ");
+  const session = await g.query("replaySession", { id }, `id ${fragments}`);
+  if (!session) throw new Error(`Replay session ${id} not found`);
+  if (!session.entries) throw new Error(`Replay session ${id} does not expose entries`);
+  return { ...session.entries, edges: session.entries.edges.map((e: any) => ({ ...e, node: decodeReplayEntry(e.node) })) };
+}
+
+function requireHttpSession(session: any): void {
+  if (session.__typename && session.__typename !== "ReplaySessionHttp" && session.__typename !== "ReplaySession") {
+    throw new Error(`Session ${session.id} is ${session.__typename}; HTTP edit requires an HTTP replay session`);
+  }
+}
+
 async function resolveSession(client: any, idOrName: string) {
   try {
-    const byId = await client.replay.sessions.get(idOrName);
+    const byId = await getReplaySession(client, idOrName);
     if (byId) return byId;
   } catch {}
 
   let after: string | undefined;
   while (true) {
-    const page = after
-      ? await client.replay.sessions.list().after(after).first(100)
-      : await client.replay.sessions.list().first(100);
+    const page = await getReplaySessionPage(client, after, 100);
 
     for (const edge of page.edges) {
       if (edge.node.name === idOrName) return edge.node;
@@ -178,7 +328,7 @@ async function resolveSession(client: any, idOrName: string) {
  * undefined if no collection matches (callers should error and tell the user to
  * create it explicitly — collection names are mandatory and never auto-created).
  */
-async function resolveCollectionId(client: any, idOrName: string): Promise<string | undefined> {
+export async function resolveCollectionId(client: any, idOrName: string): Promise<string | undefined> {
   let after: string | undefined;
   while (true) {
     const page = after
@@ -211,7 +361,7 @@ async function requireCollection(client: any, ref: string | undefined): Promise<
 /** Apply a NameChange to a just-touched session, returning the effective name. */
 async function applyNameChange(client: any, sessionId: string, current: string | undefined, change: NameChange): Promise<string | undefined> {
   if (change.kind === "rename") {
-    await client.replay.sessions.rename(sessionId, change.name);
+    await renameReplaySession(client, sessionId, change.name);
     return change.name;
   }
   return current;
@@ -290,7 +440,7 @@ export async function cmdReplay(
   const createOpts: any = { requestSource: { id: requestId } };
   if (collectionId) createOpts.collectionId = collectionId;
   const session = await client.replay.sessions.create(createOpts);
-  await client.replay.sessions.rename(session.id, name);
+  await renameReplaySession(client, session.id, name);
 
   let raw = rawOverride ? await resolveRaw(rawOverride) : decodeRaw(original.request.raw);
   if (!raw) {
@@ -328,7 +478,7 @@ export async function cmdSendRaw(
   const collectionId = await requireCollection(client, collectionRef);
   const connection = buildConnection(host, port, tls, overrides);
   const session = await createRawReplaySession(client, raw, connection, collectionId);
-  await client.replay.sessions.rename(session.id, name);
+  await renameReplaySession(client, session.id, name);
 
   const result = await client.replay.send(session.id, { raw, connection });
   console.log(JSON.stringify({ sessionName: name, ...buildReplayOutput(session.id, result, opts) }, null, 2));
@@ -370,7 +520,7 @@ export async function cmdEdit(
       requestSource: { id: requestId },
       ...(collectionId ? { collectionId } : {}),
     });
-    await client.replay.sessions.rename(session.id, target.name);
+    await renameReplaySession(client, session.id, target.name);
     sessionId = session.id;
     sessionName = target.name;
   } else {
@@ -379,6 +529,7 @@ export async function cmdEdit(
       console.error(`Replay session "${target.ref}" not found`);
       process.exit(1);
     }
+    requireHttpSession(session);
     sessionId = session.id;
     sessionName = await applyNameChange(client, session.id, session.name, target.nameChange);
   }
@@ -410,7 +561,10 @@ export async function cmdGetSession(sessionIdOrName: string, opts: OutputOpts) {
   };
 
   if (session.activeEntryId) {
-    const entry = await client.replay.entries.get(session.activeEntryId);
+    const g = nativeSessionGraphs.get(session);
+    const entry = g
+      ? await nativeReplayEntry(g, session.activeEntryId, true, session.__typename)
+      : await client.replay.entries.get(session.activeEntryId);
     if (entry) output.activeEntry = formatReplayEntry(entry, opts, true);
   }
 
@@ -430,9 +584,12 @@ export async function cmdReplayEntries(
     process.exit(1);
   }
 
-  const connection = await session.entries()
-    .includeRaw(includeRaw ? { request: true, response: true, replay: true } : false)
-    .first(limit);
+  const g = nativeSessionGraphs.get(session);
+  const connection = g
+    ? await nativeSessionEntries(g, session.id, limit, includeRaw)
+    : await session.entries()
+      .includeRaw(includeRaw ? { request: true, response: true, replay: true } : false)
+      .first(limit);
 
   const results = connection.edges.map((e: any) => formatReplayEntry(e.node, opts, includeRaw));
 
@@ -463,6 +620,8 @@ export async function cmdEditSession(
     console.error(`Session ${session.id} has no active entry`);
     process.exit(1);
   }
+
+  requireHttpSession(session);
 
   const entry = await client.replay.entries.get(session.activeEntryId);
   if (!entry?.raw) {
@@ -529,13 +688,26 @@ function formatReplayEntry(entry: any, opts: OutputOpts, includeRaw: boolean) {
     if (entry.response?.raw) output.response.raw = formatHttpRaw(decodeRaw(entry.response.raw), opts);
   }
 
+  if (entry.httpEntries) {
+    output.httpEntries = entry.httpEntries.map((e: any) => formatReplayEntry(e, opts, includeRaw));
+  }
+  if (entry.http) output.http = formatReplayEntry(entry.http, opts, includeRaw);
+  if (entry.stream) output.streamId = entry.stream.id;
+  if (entry.messages) {
+    output.messages = entry.messages.map((m: any) => ({
+      id: m.id,
+      ...m.head,
+      ...(m.head?.raw ? { raw: { encoding: "base64", data: Buffer.from(m.head.raw).toString("base64") } } : {}),
+    }));
+  }
+
   return output;
 }
 
 // -- Pagination helper --
 
 async function paginateSdkList<T>(
-  fetchPage: (after: string | undefined, want: number) => Promise<{
+  fetchPage: (after: string | undefined, want: number) => PromiseLike<{
     edges: Array<{ node: T }>;
     pageInfo: { hasNextPage: boolean; endCursor?: string | null };
   }>,
@@ -564,9 +736,7 @@ export async function cmdReplaySessions(limit?: number) {
   // Sessions can't be sorted (SDK exposes no order field), so a single page can hide
   // recently-created sessions on later pages. Paginate fully (capped) by default.
   const { results, truncated } = await paginateSdkList(
-    (after, want) => after
-      ? client.replay.sessions.list().after(after).first(want)
-      : client.replay.sessions.list().first(want),
+    (after, want) => getReplaySessionPage(client, after, want),
     (n: any) => ({ id: n.id, name: n.name, collectionId: n.collectionId, activeEntryId: n.activeEntryId }),
     limit,
   );
@@ -580,7 +750,7 @@ export async function cmdCreateSession(requestId: string, name: string, collecti
     requestSource: { id: requestId },
     ...(collectionId ? { collectionId } : {}),
   });
-  await client.replay.sessions.rename(session.id, name);
+  await renameReplaySession(client, session.id, name);
   console.log(JSON.stringify({
     id: session.id,
     name,
@@ -595,7 +765,7 @@ export async function cmdRenameSession(sessionRef: string, name: string) {
     console.error(`Replay session "${sessionRef}" not found`);
     process.exit(1);
   }
-  await client.replay.sessions.rename(session.id, name);
+  await renameReplaySession(client, session.id, name);
   console.log(JSON.stringify({ id: session.id, name, renamed: true }, null, 2));
 }
 
@@ -607,11 +777,13 @@ export async function cmdMoveSession(sessionRef: string, collectionRef: string) 
     process.exit(1);
   }
   const collectionId = await requireCollection(client, collectionRef);
-  const moved = await client.replay.sessions.move(session.id, collectionId!);
+  const result = await client.graphql.mutation(MOVE_REPLAY_SESSION, { id: session.id, collectionId });
+  const moved = (result as any).moveReplaySession?.session;
+  if (!moved) throw new Error(`Replay session ${session.id} could not be moved`);
   console.log(JSON.stringify({
     id: moved.id,
     name: moved.name,
-    collectionId: moved.collectionId,
+    collectionId,
     moved: true,
   }, null, 2));
 }
@@ -658,35 +830,41 @@ export async function cmdDeleteCollection(collectionRef: string) {
 
 // -- Automate / Fuzz --
 
-export async function cmdCreateAutomateSession(requestId: string) {
+export async function cmdCreateAutomateSession(requestId: string, opts: ResultOutputOpts & { name?: string } = {}) {
   const client = await getClient();
   const result = await client.graphql.mutation(CREATE_AUTOMATE_SESSION, {
     input: { requestSource: { id: requestId } },
   });
-  console.log(JSON.stringify((result as any).createAutomateSession.session, null, 2));
+  const session = (result as any).createAutomateSession.session;
+  if (!session) throw new Error("Create automate session returned no session");
+  if (opts.name) {
+    const { getGraph } = await import("../capabilities");
+    const g = await getGraph(client);
+    await g.mutation("renameAutomateSession", { id: session.id, name: opts.name }, "session {id name}");
+    session.name = opts.name;
+  }
+  await printResult(session, opts);
 }
 
 export async function cmdFuzz(sessionId: string, payloads: string[]) {
+  // The legacy alias starts the same bounded job as `automate start`. Payloads
+  // were historically configured on the session; this argument stays accepted
+  // for CLI compatibility and does not silently replace those saved settings.
   const client = await getClient();
-
-  const check = await client.graphql.query(GET_AUTOMATE_SESSION, { id: sessionId });
-  const session = (check as any).automateSession;
-  if (!session) {
-    console.error(`Automate session ${sessionId} not found`);
-    process.exit(1);
-  }
+  const { startAutomateTask } = await import("./automate");
+  const result = await startAutomateTask(client, sessionId);
+  const task = result.automateTask;
+  if (!task) throw new Error(`Automate session ${sessionId} returned no task`);
 
   console.log(JSON.stringify({
-    note: "Starting automate task with existing session settings. Configure payloads in Caido UI.",
+    note: "Starting automate task with existing session settings.",
     sessionId,
   }, null, 2));
-
-  const startResult = await client.graphql.mutation(START_AUTOMATE_TASK, { automateSessionId: sessionId });
-  const task = (startResult as any).startAutomateTask.automateTask;
 
   console.log(JSON.stringify({
     sessionId,
     taskId: task.id,
     status: "started",
+    estimatedRequests: result.estimatedRequests,
   }, null, 2));
 }
