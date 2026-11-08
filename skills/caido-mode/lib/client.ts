@@ -22,6 +22,7 @@ import { homedir } from "os";
 import { join, dirname } from "path";
 
 const SECRETS_PATH = join(homedir(), ".config", "caido", "secrets.json");
+const LEGACY_SECRETS_PATH = join(homedir(), ".claude", "config", "secrets.json");
 const DEFAULT_URL = "http://localhost:8080";
 
 /**
@@ -56,9 +57,9 @@ export interface CaidoRoot {
 
 /** Read the whole secrets.json (all services), tolerating a missing/corrupt file. */
 function readSecretsFile(): Record<string, any> {
-  if (!existsSync(SECRETS_PATH)) return {};
+  const path = existsSync(SECRETS_PATH) ? SECRETS_PATH : LEGACY_SECRETS_PATH;
   try {
-    return JSON.parse(readFileSync(SECRETS_PATH, "utf-8")) || {};
+    return JSON.parse(readFileSync(path, "utf-8")) || {};
   } catch {
     return {};
   }
