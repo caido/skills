@@ -1,14 +1,13 @@
 ---
 name: caido-mode
-description: Full Caido SDK integration for Claude Code. Search HTTP history with HTTPQL, test with curl proxied through Caido (caching auth in reusable static curl config files), add match & replace rules, and organize handoffs into named replay sessions and collections - all via the official @caido/sdk-client. PAT auth recommended.
-tags: [worker]
+description: Full Caido SDK integration for coding agents. Search HTTP history with HTTPQL, test with curl proxied through Caido (caching auth in reusable static curl config files), add match & replace rules, and organize handoffs into named replay sessions and collections - all via the official @caido/sdk-client. PAT auth recommended.
 ---
 
 # Caido Mode Skill
 
 A CLI over Caido's API (built on the official `@caido/sdk-client`) for HTTP-history-driven
-testing. The tool lives at `~/.claude/skills/caido-mode/caido-client.ts`; every command is
-`npx tsx caido-client.ts <command>` and outputs JSON unless noted.
+testing. The tool lives alongside this file as `caido-client.ts`; run commands from this skill
+directory as `npx tsx caido-client.ts <command>`. Output is JSON unless noted.
 
 ## How to operate (read this first)
 
@@ -176,8 +175,8 @@ npx tsx caido-client.ts health             # verify instance is up
 ```
 
 `setup` validates the PAT via the SDK's device-code flow (auto-approved by the PAT), then caches
-the PAT + access token (+ proxy) to `~/.claude/config/secrets.json`. Subsequent runs use the
-cached token; a valid cached token works even without the PAT.
+the PAT + access token (+ proxy) to `~/.config/caido/secrets.json`. Subsequent runs use the cached
+token; a valid cached token works even without the PAT.
 
 ### Multiple Caido instances
 
@@ -521,7 +520,7 @@ lib/
 
 ---
 
-## Instructions for Claude (checklist)
+## Agent checklist
 
 1. **Test with `curl`, always through Caido** — the proxy must be in the path (config does this;
    otherwise `-x <proxy>`). **Exception:** bruteforce/fuzzing (`ffuf`) or 100+ requests at once go
