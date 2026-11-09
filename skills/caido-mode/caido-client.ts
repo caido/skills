@@ -17,6 +17,7 @@ import { cmdInterceptStatus, cmdInterceptSet } from "./lib/commands/intercept";
 import { cmdMrRules, cmdMrCollections, cmdCreateMrRule, cmdUpdateMrRule, cmdDeleteMrRule, cmdToggleMrRule, cmdRenameMrRule, cmdMoveMrRule, cmdTestMrRule, cmdCreateMrCollection, cmdRenameMrCollection, cmdDeleteMrCollection } from "./lib/commands/matchreplace";
 import type { MrRuleOpts } from "./lib/commands/matchreplace";
 import { cmdViewer, cmdPlugins, cmdHealth, cmdSetup, cmdAuthStatus } from "./lib/commands/info";
+import { cmdEvidence } from "./lib/commands/evidence";
 
 const DEBUG = process.env.DEBUG === "1";
 
@@ -134,6 +135,17 @@ Usage:
     --out <file>               Write to a file instead of stdout
     --response                 Dump the raw response instead of the request
                                → npx tsx caido-client.ts raw 123 --out /tmp/req.txt
+
+  evidence <request-id>        Render a Caido-style Request/Response panel to a
+                               PNG (dark theme, syntax-highlighted) — for report
+                               evidence. Real data via the SDK, headless Chrome
+                               capture via raw CDP (no UI login needed).
+    --out <file>               REQUIRED — output PNG path
+    --note <text>              Extra comment line under the Response pane
+                               (repeatable, e.g. a decoded JWT payload)
+    --width <px>                Pane width total (default: 1620)
+                               → npx tsx caido-client.ts evidence 22 --out sqli.png \
+                                   --note "JWT decoded: role=admin"
 
   replay <request-id>          Replay into a NEW named replay session (handoff)
     --name <name>              Session name (REQUIRED)
@@ -465,6 +477,20 @@ async function main() {
         else if (args[i] === "--response") { response = true; }
       }
       await cmdRaw(args[1], { out, response });
+      break;
+    }
+
+    case "evidence": {
+      if (!args[1]) { console.error("Error: request-id required"); process.exit(1); }
+      let out: string | undefined, width = 1620;
+      const notes: string[] = [];
+      for (let i = 2; i < args.length; i++) {
+        if (args[i] === "--out" && args[i + 1]) { out = args[i + 1]; i++; }
+        else if (args[i] === "--note" && args[i + 1]) { notes.push(args[i + 1]); i++; }
+        else if (args[i] === "--width" && args[i + 1]) { width = parseInt(args[i + 1], 10); i++; }
+      }
+      if (!out) { console.error("Error: --out <file.png> required"); process.exit(1); }
+      await cmdEvidence(args[1], { out, notes, width });
       break;
     }
 
