@@ -21,6 +21,8 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "
 import { homedir } from "os";
 import { join, dirname } from "path";
 
+import packageJson from "../package.json" with { type: "json" };
+
 const SECRETS_PATH = join(homedir(), ".config", "caido", "secrets.json");
 const LEGACY_SECRETS_PATH = join(homedir(), ".claude", "config", "secrets.json");
 const DEFAULT_URL = "http://localhost:8080";
@@ -222,6 +224,7 @@ export async function getClient(): Promise<Client> {
     url: config.url,
     auth: { pat: config.pat, cache },
     logger: QUIET_LOGGER,
+    app: { name: packageJson.name, version: packageJson.version },
   });
 
   try {
