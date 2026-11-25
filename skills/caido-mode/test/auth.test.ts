@@ -102,6 +102,7 @@ test("legacy auth migrates without losing other services or instance credentials
 test("token cache isolates instances, canonicalizes clears and rejects expired auth", async () => {
   const fixtureCache = new auth.SecretsTokenCache("HTTP://FIXTURE.INVALID:8080/");
   const otherCache = new auth.SecretsTokenCache(otherUrl);
+  await fixtureCache.save(validToken);
   await otherCache.save({ ...validToken, accessToken: "other-access-token" });
   assert.equal((await fixtureCache.load())?.accessToken, validToken.accessToken);
   await fixtureCache.clear();
@@ -115,6 +116,7 @@ test("token cache isolates instances, canonicalizes clears and rejects expired a
 });
 
 test("cached auth and version add zero startup calls; health explicitly refreshes metadata", async () => {
+  auth.upsertCaidoInstance(fixtureUrl, { pat: undefined, cachedToken: validToken }, true);
   state.saveInstanceHealth(fixtureUrl, { name: "fixture", version: "0.57.0", ready: true });
   const previousFetch = globalThis.fetch;
   const calls: string[] = [];

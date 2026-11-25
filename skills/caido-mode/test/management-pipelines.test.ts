@@ -22,7 +22,7 @@ const schema = introspectionFromSchema(buildSchema(`
   type Query {health: Boolean}
   type Mutation {
     createReplayPipelineHttpSession(input: CreateInput!): Payload!
-    renameReplaySession(id: ID!, name: String!): Payload!
+    renameReplaySession(id: ID!, name: String!): RenamePayload!
   }
   input CreateInput {requestSources: [Source!]!, settings: Settings!}
   input Source {id: ID!}
@@ -30,6 +30,7 @@ const schema = introspectionFromSchema(buildSchema(`
   input Strategy {sequential: Sequential}
   input Sequential {abortOnFailure: Boolean!}
   type Payload {session: Session, error: Error}
+  type RenamePayload {session: Session}
   type Session {id: ID!, name: String!}
   type Error {code: String}
 `));
@@ -82,19 +83,37 @@ test("pipeline rename failures identify the persisted session as a partial failu
   assert.equal(print.mock.callCount(), 0);
 });
 
-test("successful pipeline creation reports the requested name and persisted ID", async t => {
+test("pipeline rename responses without a session report partial failure", async t => {
+  t.mock.method(Client.prototype, "connect", async () => {});
+  t.mock.method(graphql, "query", async () => schema);
+  t.mock.method(graphql, "mutation", async document => {
+    const operation = document.definitions[0].selectionSet.selections[0].name.value;
+    return { [operation]: operation === "renameReplaySession"
+      ? { session: null }
+      : { session: { id: "pipeline-9", name: "Default" } } };
+  });
+  const print = t.mock.method(console, "log", () => {});
+  await assert.rejects(() => cmdCreatePipeline({ requests: ["1", "2"], name: "Named pipeline" }), error => {
+    assert.equal((error as Error & { code: string }).code, "PARTIAL_FAILURE");
+    assert.match((error as Error).message, /pipeline-9.*created.*rename failed.*no session/);
+    return true;
+  });
+  assert.equal(print.mock.callCount(), 0);
+});
+
+test("successful pipeline creation reports the server-confirmed name and persisted ID", async t => {
   t.mock.method(Client.prototype, "connect", async () => {});
   t.mock.method(graphql, "query", async () => schema);
   const calls: any[] = [];
   t.mock.method(graphql, "mutation", async (document, variables) => {
     const operation = document.definitions[0].selectionSet.selections[0].name.value;
     calls.push({ operation, variables });
-    return { [operation]: { session: { id: "pipeline-8", name: variables.name ?? "Default" } } };
+    return { [operation]: { session: { id: "pipeline-8", name: variables.name ? "Confirmed pipeline" : "Default" } } };
   });
   const print = t.mock.method(console, "log", () => {});
   await cmdCreatePipeline({ requests: ["1", "2"], name: "Named pipeline" });
   assert.deepEqual(calls[1], { operation: "renameReplaySession", variables: { id: "pipeline-8", name: "Named pipeline" } });
   assert.deepEqual(JSON.parse(String(print.mock.calls[0].arguments[0])), {
-    session: { id: "pipeline-8", name: "Named pipeline" }, strategy: "sequential",
+    session: { id: "pipeline-8", name: "Confirmed pipeline" }, strategy: "sequential",
   });
 });
