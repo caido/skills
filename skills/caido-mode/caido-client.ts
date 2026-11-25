@@ -5,6 +5,8 @@
  * No raw fetch — uses SDK methods + client.graphql.query/mutation with gql documents.
  */
 
+import { existsSync, realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { parseOutputOpts, DEFAULT_OUTPUT_OPTS } from "./lib/types";
 
 // Commands
@@ -104,12 +106,70 @@ function parseMrOpts(args: string[], startIdx: number): MrRuleOpts {
   return o;
 }
 
+function option(args: string[], name: string): string | undefined {
+  const index = args.indexOf(name);
+  if (index < 0) return undefined;
+  if (args[index + 1] === undefined || args[index + 1].startsWith("--")) throw new Error(`${name} requires a value`);
+  return args[index + 1];
+}
+
+function required(value: string | undefined, label: string): string {
+  if (!value || value.startsWith("--")) throw new Error(`${label} required`);
+  return value;
+}
+
+function numberOption(args: string[], name: string, fallback: number, min = 1, max = 100): number {
+  const value = option(args, name);
+  if (value === undefined) return fallback;
+  const number = Number(value);
+  if (!Number.isInteger(number) || number < min || number > max) throw new Error(`${name} must be an integer ${min}..${max}`);
+  return number;
+}
+
+function resultOptions(args: string[]) {
+  return { output: option(args, "--output"), maxBodyChars: parseOutputOpts(args, 1).maxBodyChars };
+}
+
+function pageOptions(args: string[]) {
+  return { ...resultOptions(args), limit: numberOption(args, "--limit", 10), after: option(args, "--after") };
+}
+
 function printUsage() {
   console.log(`
-Caido SDK Client v3.1 — Built on @caido/sdk-client
+Caido SDK Client v3.2 — Built on @caido/sdk-client
 
 Usage:
-  caido-client.ts <command> [options]
+  npx tsx caido-client.ts <command> [options]
+
+WORKFLOWS
+  workflows | get-workflow ID | workflow-nodes [search] [--refresh]
+  build-workflow --name NAME --kind convert|active|passive --code @file [--event request|response]
+  test-workflow --input @definition.json --data TEXT (convert) / --request-id ID (HTTP)
+  create-workflow --input @definition.json [--global] [--enable]
+  update-workflow ID --input @definition.json | run-workflow ID --data TEXT / --request-id ID
+  toggle-workflow ID --on|--off | delete-workflow ID
+  --raw                     Preserve convert output as base64 (test/run)
+
+WEBSOCKETS & INTERCEPT
+  streams [--filter StreamQL] | ws-messages STREAM_ID | get-ws-message ID [--raw]
+  intercept-messages [--kind request|response|stream_ws] | get-intercept-message ID
+  set-intercept-options --input @patch.json
+  forward-intercept-message ID [--raw @file --kind request|response|ws] | drop-intercept-message ID
+
+AUTOMATE & PIPELINES
+  automate-sessions | get-automate-session ID | delete-automate-session ID
+  configure-automate-session ID --match FUZZ --payloads @strings.json [--workers 1 --delay 0]
+  start-automate-task ID [--max-requests 100 --max-workers 20]
+  automate-tasks | automate-results ID [--entry ENTRY_ID]
+  pause-automate-task ID | resume-automate-task ID | cancel-automate-task ID
+  create-pipeline --requests ID,ID --name NAME [--strategy sequential|last-byte|single-packet]
+  run-pipeline ID [--max-requests 20] | get-pipeline ID | delete-pipeline ID
+
+CAPABILITIES & SETTINGS
+  capabilities [--refresh] | schema TYPE [--refresh] | check-updates
+  settings | set-settings --input @patch.json
+  Paged lists accept --limit/--after; large results accept --output FILE.
+  create-project NAME | get-project ID | rename-project ID NAME | delete-project ID
 
 ═══════════════════════════════════════════════
  HTTP HISTORY & TESTING
@@ -382,11 +442,10 @@ Usage:
     export CAIDO_URL=http://localhost:8081     # selects the active instance per shell
     export CAIDO_PROXY=...      # only if the proxy listener differs from CAIDO_URL
 
-Primary testing workflow (curl, proxied through Caido — NOT replay):
-  npx tsx caido-client.ts search 'req.path.cont:"/api/user"' --recent --compact
-  npx tsx caido-client.ts export-curl 12345        # grab a base request as curl
-  # then test with curl, always proxying through Caido so it lands in history:
-  curl -x http://127.0.0.1:8080 -k 'https://target.com/api/user/999' -H 'Cookie: ...'
+Primary testing workflow (curl through the selected proxy):
+  npx tsx caido-client.ts search 'req.path.cont:"/api/user"' --compact
+  npx tsx caido-client.ts export-curl 12345 --config --out auth.cfg
+  curl -K auth.cfg 'https://target.com/api/user/999'
 
 Handoff to the user (named replay sessions in named collections):
   npx tsx caido-client.ts create-collection "Vuln chain - IDOR to ATO"
@@ -402,12 +461,10 @@ Other:
 `);
 }
 
-async function main() {
-  const args = process.argv.slice(2);
-
-  if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
+export async function main(args: string[] = process.argv.slice(2)) {
+  if (!args.length || args[0] === "--help" || args[0] === "-h" || args[0] === "help") {
     printUsage();
-    process.exit(0);
+    return;
   }
 
   const command = args[0];
@@ -665,7 +722,7 @@ async function main() {
     // ── Automate & Fuzzing ──
     case "create-automate-session": {
       if (!args[1]) { console.error("Error: request-id required"); process.exit(1); }
-      await cmdCreateAutomateSession(args[1]);
+      await cmdCreateAutomateSession(args[1], { ...resultOptions(args), name: option(args, "--name") });
       break;
     }
 
@@ -890,6 +947,115 @@ async function main() {
       break;
     }
 
+    // ── Workflows ──
+    case "workflows": {
+      await (await import("./lib/commands/workflows")).cmdWorkflows(numberOption(args, "--limit", 10), resultOptions(args));
+      break;
+    }
+    case "get-workflow": { await (await import("./lib/commands/workflows")).cmdGetWorkflow(required(args[1], "Workflow ID"), resultOptions(args)); break; }
+    case "workflow-nodes": { await (await import("./lib/commands/workflows")).cmdWorkflowNodes(args[1]?.startsWith("--") ? undefined : args[1], args.includes("--refresh"), numberOption(args, "--limit", 10), resultOptions(args)); break; }
+    case "build-workflow": {
+      const { input } = await import("./lib/capabilities");
+      const kind = option(args, "--kind") || "convert", event = option(args, "--event") || "request";
+      if (!["convert", "active", "passive"].includes(kind)) throw new Error("--kind convert|active|passive");
+      if (!["request", "response"].includes(event)) throw new Error("--event request|response");
+      await (await import("./lib/commands/workflows")).cmdBuildWorkflow({ ...resultOptions(args), name: required(option(args, "--name"), "--name"), code: await input(option(args, "--code")), kind: kind as "convert" | "active" | "passive", event: event as "request" | "response" });
+      break;
+    }
+    case "create-workflow":
+    case "update-workflow":
+    case "test-workflow": {
+      const { input } = await import("./lib/capabilities");
+      const definition = await input(option(args, "--input"), { json: true });
+      const workflow = await import("./lib/commands/workflows");
+      if (command === "create-workflow") await workflow.cmdCreateWorkflow(definition, args.includes("--global"), args.includes("--enable"), resultOptions(args));
+      else if (command === "update-workflow") await workflow.cmdUpdateWorkflow(required(args[1], "Workflow ID"), definition, resultOptions(args));
+      else await workflow.cmdTestWorkflow(definition, {
+        ...resultOptions(args), raw: args.includes("--raw"), requestId: option(args, "--request-id"),
+        data: option(args, "--data") !== undefined ? await input(option(args, "--data"), { bytes: true }) : undefined,
+        request: option(args, "--request") !== undefined ? await input(option(args, "--request"), { bytes: true }) : undefined,
+        response: option(args, "--response") !== undefined ? await input(option(args, "--response"), { bytes: true }) : undefined,
+        host: option(args, "--host"), port: option(args, "--port") ? numberOption(args, "--port", 80, 1, 65535) : undefined, tls: args.includes("--tls"),
+      });
+      break;
+    }
+    case "run-workflow": {
+      const { input } = await import("./lib/capabilities");
+      await (await import("./lib/commands/workflows")).cmdRunWorkflow(required(args[1], "Workflow ID"), { ...resultOptions(args), raw: args.includes("--raw"), requestId: option(args, "--request-id"), data: option(args, "--data") !== undefined ? await input(option(args, "--data"), { bytes: true }) : undefined });
+      break;
+    }
+    case "toggle-workflow": {
+      const on = args.includes("--on"), off = args.includes("--off");
+      if (on === off) throw new Error("Pass exactly one of --on or --off");
+      await (await import("./lib/commands/workflows")).cmdToggleWorkflow(required(args[1], "Workflow ID"), on, resultOptions(args));
+      break;
+    }
+    case "delete-workflow": { await (await import("./lib/commands/workflows")).cmdDeleteWorkflow(required(args[1], "Workflow ID")); break; }
+
+    // ── WebSocket history ──
+    case "streams":
+    case "ws-messages":
+    case "get-ws-message": {
+      const ws = await import("./lib/commands/streams");
+      const opts = { ...pageOptions(args), filter: option(args, "--filter"), scope: option(args, "--scope"), raw: args.includes("--raw") };
+      if (command === "streams") await ws.cmdStreams(opts);
+      else if (command === "ws-messages") await ws.cmdWsMessages(required(args[1], "Stream ID"), opts);
+      else await ws.cmdGetWsMessage(required(args[1], "Message ID"), opts);
+      break;
+    }
+
+    // ── Intercept queue ──
+    case "intercept-messages":
+    case "get-intercept-message": {
+      const intercept = await import("./lib/commands/intercept");
+      const opts = { ...pageOptions(args), kind: option(args, "--kind") };
+      if (command === "intercept-messages") await intercept.cmdInterceptMessages(opts);
+      else await intercept.cmdGetInterceptMessage(required(args[1], "Message ID"), opts);
+      break;
+    }
+    case "set-intercept-options": {
+      const { input } = await import("./lib/capabilities");
+      await (await import("./lib/commands/intercept")).cmdSetInterceptOptions(await input(option(args, "--input"), { json: true }));
+      break;
+    }
+    case "forward-intercept-message": {
+      const { input } = await import("./lib/capabilities");
+      await (await import("./lib/commands/intercept")).cmdForwardInterceptMessage(required(args[1], "Message ID"), { ...resultOptions(args), kind: option(args, "--kind"), raw: option(args, "--raw") !== undefined ? await input(option(args, "--raw"), { bytes: true }) : undefined });
+      break;
+    }
+    case "drop-intercept-message": { await (await import("./lib/commands/intercept")).cmdDropInterceptMessage(required(args[1], "Message ID")); break; }
+
+    // ── Native Automate and pipeline controls ──
+    case "automate-sessions": { await (await import("./lib/commands/automate")).cmdAutomateSessions(pageOptions(args)); break; }
+    case "get-automate-session": { await (await import("./lib/commands/automate")).cmdGetAutomateSession(required(args[1], "Session ID"), { ...resultOptions(args), raw: args.includes("--raw") }); break; }
+    case "configure-automate-session": {
+      const { input } = await import("./lib/capabilities");
+      await (await import("./lib/commands/automate")).cmdConfigureAutomateSession(required(args[1], "Session ID"), { ...resultOptions(args), input: option(args, "--input") ? await input(option(args, "--input"), { json: true }) : undefined, match: option(args, "--match"), payloads: option(args, "--payloads") ? await input(option(args, "--payloads"), { json: true }) : undefined, workers: numberOption(args, "--workers", 1, 1, 20), delay: numberOption(args, "--delay", 0, 0, 60000), maxRequests: numberOption(args, "--max-requests", 100, 1, 10000) });
+      break;
+    }
+    case "start-automate-task": { await (await import("./lib/commands/automate")).cmdStartAutomateTask(required(args[1], "Session ID"), { ...resultOptions(args), maxRequests: numberOption(args, "--max-requests", 100, 1, 10000), maxWorkers: numberOption(args, "--max-workers", 20, 1, 100) }); break; }
+    case "automate-tasks": { await (await import("./lib/commands/automate")).cmdAutomateTasks(pageOptions(args)); break; }
+    case "automate-results": { await (await import("./lib/commands/automate")).cmdAutomateResults(required(args[1], "Session ID"), { ...pageOptions(args), entry: option(args, "--entry") }); break; }
+    case "pause-automate-task":
+    case "resume-automate-task":
+    case "cancel-automate-task": { await (await import("./lib/commands/automate")).cmdControlAutomateTask(command.split("-")[0] as "pause" | "resume" | "cancel", required(args[1], "Task ID")); break; }
+    case "delete-automate-session": { await (await import("./lib/commands/automate")).cmdDeleteAutomateSession(required(args[1], "Session ID")); break; }
+    case "create-pipeline": { await (await import("./lib/commands/pipelines")).cmdCreatePipeline({ ...resultOptions(args), requests: required(option(args, "--requests"), "--requests").split(","), name: required(option(args, "--name"), "--name"), strategy: option(args, "--strategy"), collection: option(args, "--collection"), maxRequests: numberOption(args, "--max-requests", 20, 2, 100) }); break; }
+    case "run-pipeline": { await (await import("./lib/commands/pipelines")).cmdRunPipeline(required(args[1], "Session ID"), { ...resultOptions(args), maxRequests: numberOption(args, "--max-requests", 20, 2, 100) }); break; }
+    case "get-pipeline": { await (await import("./lib/commands/pipelines")).cmdGetPipeline(required(args[1], "Session ID"), resultOptions(args)); break; }
+    case "delete-pipeline": { await (await import("./lib/commands/pipelines")).cmdDeletePipeline(required(args[1], "Session ID")); break; }
+
+    // ── Instance capabilities and missing project operations ──
+    case "capabilities": { await (await import("./lib/commands/info")).cmdCapabilities(args.includes("--refresh"), resultOptions(args)); break; }
+    case "schema": { await (await import("./lib/commands/info")).cmdSchema(required(args[1], "Schema type"), args.includes("--refresh"), resultOptions(args)); break; }
+    case "check-updates": { await (await import("./lib/commands/info")).cmdCheckUpdates(); break; }
+    case "settings": { await (await import("./lib/commands/info")).cmdSettings(); break; }
+    case "set-settings": { const { input } = await import("./lib/capabilities"); await (await import("./lib/commands/info")).cmdSetSettings(await input(option(args, "--input"), { json: true })); break; }
+    case "get-project": { await (await import("./lib/commands/management")).cmdGetProject(required(args[1], "Project ID")); break; }
+    case "create-project": { await (await import("./lib/commands/management")).cmdCreateProject(required(args[1], "Project name"), args.includes("--temporary")); break; }
+    case "rename-project": { await (await import("./lib/commands/management")).cmdRenameProject(required(args[1], "Project ID"), required(args[2], "New name")); break; }
+    case "delete-project": { await (await import("./lib/commands/management")).cmdDeleteProject(required(args[1], "Project ID")); break; }
+
     // ── Info ──
     case "viewer": { await cmdViewer(); break; }
     case "plugins": { await cmdPlugins(); break; }
@@ -921,7 +1087,8 @@ async function main() {
   }
 }
 
-main().catch((e) => {
+if (process.argv[1] && existsSync(process.argv[1]) &&
+    realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) main().catch((e) => {
   console.error(`Error: ${e.message}`);
   if (DEBUG) console.error(e.stack);
   process.exit(1);

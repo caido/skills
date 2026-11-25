@@ -16,12 +16,15 @@
  * The legacy flat shape ({ url, pat, cachedToken, ... }) is migrated on read.
  */
 
-import { Client, type TokenCache, type CachedToken } from "@caido/sdk-client";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "fs";
+import { Client, Version, type TokenCache, type CachedToken } from "@caido/sdk-client";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, chmodSync } from "fs";
 import { homedir } from "os";
-import { join, dirname } from "path";
+import { join, dirname, resolve } from "path";
+import { readKnownVersion } from "./state";
 
-const SECRETS_PATH = join(homedir(), ".config", "caido", "secrets.json");
+const SECRETS_PATH = process.env.CAIDO_CONFIG
+  ? resolve(process.env.CAIDO_CONFIG)
+  : join(homedir(), ".config", "caido", "secrets.json");
 const LEGACY_SECRETS_PATH = join(homedir(), ".claude", "config", "secrets.json");
 const DEFAULT_URL = "http://localhost:8080";
 
@@ -57,7 +60,7 @@ export interface CaidoRoot {
 
 /** Read the whole secrets.json (all services), tolerating a missing/corrupt file. */
 function readSecretsFile(): Record<string, any> {
-  const path = existsSync(SECRETS_PATH) ? SECRETS_PATH : LEGACY_SECRETS_PATH;
+  const path = process.env.CAIDO_CONFIG || existsSync(SECRETS_PATH) ? SECRETS_PATH : LEGACY_SECRETS_PATH;
   try {
     return JSON.parse(readFileSync(path, "utf-8")) || {};
   } catch {
@@ -98,7 +101,8 @@ function writeCaidoRoot(root: CaidoRoot): void {
   const secrets = readSecretsFile();
   secrets.caido = { default: root.default, instances: root.instances ?? {} };
   const tmp = `${SECRETS_PATH}.tmp.${process.pid}`;
-  writeFileSync(tmp, JSON.stringify(secrets, null, 2));
+  writeFileSync(tmp, JSON.stringify(secrets, null, 2), { mode: 0o600 });
+  chmodSync(tmp, 0o600);
   renameSync(tmp, SECRETS_PATH);
 }
 
@@ -147,7 +151,10 @@ export function resolveProxy(): string {
  */
 export class SecretsTokenCache implements TokenCache {
   private _cachedToken: CachedToken | null = null;
-  constructor(private readonly url: string) {}
+  private readonly url: string;
+  constructor(url: string) {
+    this.url = canonicalUrl(url);
+  }
 
   async load(): Promise<CachedToken | undefined> {
     if (this._cachedToken) return this._cachedToken;
@@ -217,15 +224,18 @@ export async function getClient(): Promise<Client> {
 
   const config = loadConfig();
   const cache = new SecretsTokenCache(config.url);
+  const knownVersion = readKnownVersion(config.url);
 
   _client = new Client({
     url: config.url,
     auth: { pat: config.pat, cache },
     logger: QUIET_LOGGER,
+    ...(knownVersion ? { version: Version.of(knownVersion) } : {}),
   });
 
   try {
-    await _client.connect({ ready: { retries: 3, timeout: 5000, interval: 1000 } });
+    // Health checks are explicit so ordinary commands avoid a readiness round trip.
+    await _client.connect({ ready: false });
   } catch (err: any) {
     if (err.message?.includes("not ready")) {
       console.error("Error: Caido instance is not ready. Is Caido running?");

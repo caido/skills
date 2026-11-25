@@ -8,7 +8,8 @@
     "test": "node --import tsx --test test/*.test.ts"
   },
   "dependencies": {
-    "@caido/sdk-client": "^0.4.0",
+    "@caido/sdk-client": "^0.5.2",
+    "graphql": "^16.15.0",
     "graphql-tag": "^2.12.6",
     "tsx": "^4.19.0"
   }
