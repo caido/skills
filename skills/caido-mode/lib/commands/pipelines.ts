@@ -71,7 +71,11 @@ export async function cmdCreatePipeline(opts: PipelineCreateOpts) {
     },
   }, "session {id name} error {__typename}");
   if (!result.session) throw new Error("Create pipeline returned no session");
-  await g.mutation("renameReplaySession", { id: result.session.id, name: opts.name }, "session {id name}");
+  try {
+    await g.mutation("renameReplaySession", { id: result.session.id, name: opts.name }, "session {id name}");
+  } catch (err) {
+    fail(`Pipeline session ${result.session.id} was created but rename failed: ${err instanceof Error ? err.message : String(err)}`, "PARTIAL_FAILURE");
+  }
   await printResult({ ...result, session: { ...result.session, name: opts.name }, strategy: opts.strategy ?? "sequential" }, opts);
 }
 

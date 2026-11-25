@@ -143,7 +143,7 @@ export async function cmdWorkflowNodes(search?: string, refresh = false, limit =
 
 export async function cmdBuildWorkflow(opts: WorkflowBuildOpts) {
   const client = await getClient();
-  const definition = buildWorkflow(opts, await nodeDefinitions(await getGraph(client)));
+  const definition = buildWorkflow(opts, await nodeDefinitions(await getGraph(client), true));
   await printResult(definition, { ...opts, maxBodyChars: 0 });
 }
 

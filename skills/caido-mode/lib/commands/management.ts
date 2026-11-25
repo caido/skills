@@ -61,6 +61,9 @@ export async function cmdCreateFilter(name: string, query: string, alias?: strin
   // Current Caido requires a non-empty slug even when the caller omits --alias.
   const filterAlias = alias ?? name.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
   if (!filterAlias) throw new Error("--alias is required when the filter name has no a-z or 0-9 characters");
+  if (alias === undefined && (await client.filter.list()).some(filter => filter.alias === filterAlias)) {
+    throw new Error(`Filter alias "${filterAlias}" is already in use; provide a unique --alias`);
+  }
   const filter = await client.filter.create({
     name,
     clause: query,

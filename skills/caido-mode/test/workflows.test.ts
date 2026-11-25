@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { rm } from "node:fs/promises";
+import { rm, readFile } from "node:fs/promises";
 import { Client } from "@caido/sdk-client";
 import { buildSchema, introspectionFromSchema } from "graphql";
 
@@ -13,7 +13,8 @@ process.env.CAIDO_CONFIG = join(directory, "secrets.json");
 process.env.CAIDO_MODE_HOME = directory;
 process.env.CAIDO_URL = "http://fixture.invalid:8080";
 process.env.CAIDO_PAT = "fixture";
-const { cmdTestWorkflow, cmdRunWorkflow, cmdBuildWorkflow, cmdGetWorkflow } = await import("../lib/commands/workflows.ts");
+const { cmdTestWorkflow, cmdRunWorkflow, cmdBuildWorkflow, cmdGetWorkflow, cmdWorkflowNodes } = await import("../lib/commands/workflows.ts");
+const { instanceSlot } = await import("../lib/state.ts");
 const fixture = new Client({ url: process.env.CAIDO_URL });
 const workflows = Object.getPrototypeOf(fixture.workflow);
 const requests = Object.getPrototypeOf(fixture.request);
@@ -82,4 +83,35 @@ test("build/get emit runnable workflow definitions with code over 5000 character
   t.mock.method(workflows, "get", async () => ({ id: "1", kind: "CONVERT", definition }));
   await cmdGetWorkflow("1");
   assert.equal(printed[1].definition.graph.nodes[1].inputs[0].value.data, code);
+});
+
+test("builds refresh stale node versions and update the cache used by listings", async t => {
+  t.mock.method(Client.prototype, "connect", async () => {});
+  const schema = buildSchema("scalar JsonObject type Definition {raw: JsonObject!} type Query {workflowNodeDefinitions: [Definition!]!}");
+  let version = "1.0.0";
+  let queries = 0;
+  t.mock.method(Object.getPrototypeOf(fixture.graphql), "query", async document => {
+    if (document.definitions.some(definition => definition.name?.value === "IntrospectionQuery"))
+      return introspectionFromSchema(schema);
+    queries++;
+    return { workflowNodeDefinitions: ["convert-start", "code-js", "convert-end"].map(name => ({ raw: {
+      id: `caido/${name}`, name, version, workflows: ["convert"], data: { outputs: [{ alias: "data" }] },
+    } })) };
+  });
+  const printed: any[] = [];
+  t.mock.method(console, "log", value => printed.push(JSON.parse(String(value))));
+  await cmdWorkflowNodes(undefined, true);
+  assert.equal(queries, 1);
+  for (const current of ["2.0.0", "1.0.0"]) {
+    version = current;
+    await cmdBuildWorkflow({ name: "current nodes", code: "export function run({data}) { return {data}; }" });
+    assert.ok(printed.at(-1).graph.nodes.every(node => node.version === current));
+    const cached = JSON.parse(await readFile(join(instanceSlot(process.env.CAIDO_URL!), "workflow-nodes.json"), "utf8"));
+    assert.ok(cached.every(node => node.version === current));
+    const beforeListing = queries;
+    await cmdWorkflowNodes();
+    assert.equal(queries, beforeListing, "listings reuse the refreshed cache");
+    assert.ok(printed.at(-1).items.every(node => node.version === current));
+  }
+  assert.equal(queries, 3, "each build queries the current node definitions");
 });
