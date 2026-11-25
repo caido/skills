@@ -1,8 +1,8 @@
 /** Authentication compatibility and the ordinary-command network budget. */
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, readFileSync, statSync, rmSync } from "node:fs";
-import { tmpdir, homedir } from "node:os";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, statSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
@@ -33,14 +33,54 @@ after(() => {
   rmSync(sandbox, { recursive: true, force: true });
 });
 
-test("config override is optional and keeps the original default location", () => {
-  assert.equal(auth.SECRETS_PATH, join(sandbox, "secrets.json"));
+function isolatedAuth(home: string, code: string, config = "") {
   const skillRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-  const output = execFileSync(process.execPath, [
+  return execFileSync(process.execPath, [
     "--import", "tsx", "--input-type=module", "-e",
-    "import { SECRETS_PATH } from './lib/client.ts'; console.log(SECRETS_PATH);",
-  ], { cwd: skillRoot, env: { ...process.env, CAIDO_CONFIG: "" }, encoding: "utf8" });
-  assert.equal(output.trim(), join(homedir(), ".claude", "config", "secrets.json"));
+    `import os from 'node:os'; import {syncBuiltinESMExports} from 'node:module';
+     os.homedir = () => process.env.CAIDO_AUTH_TEST_HOME; syncBuiltinESMExports();
+     const auth = await import('./lib/client.ts');
+     if (!auth.SECRETS_PATH.startsWith(process.env.CAIDO_AUTH_TEST_HOME)) throw new Error('Auth test escaped its sandbox');
+     ${code}`,
+  ], { cwd: skillRoot, env: { ...process.env, CAIDO_CONFIG: config, CAIDO_AUTH_TEST_HOME: home }, encoding: "utf8" }).trim();
+}
+
+test("config override is optional and defaults to the harness-independent location", () => {
+  assert.equal(auth.SECRETS_PATH, join(sandbox, "secrets.json"));
+  const home = join(sandbox, "empty-home");
+  assert.equal(isolatedAuth(home, "console.log(auth.SECRETS_PATH);"), join(home, ".config", "caido", "secrets.json"));
+});
+
+test("legacy secrets fall back and migrate on write without losing existing services", () => {
+  const home = join(sandbox, "legacy-home");
+  const legacy = join(home, ".claude", "config", "secrets.json");
+  const modern = join(home, ".config", "caido", "secrets.json");
+  const secrets = { anotherService: { value: "preserve-me" }, caido: { url: fixtureUrl, pat: "legacy-fixture-pat" } };
+  mkdirSync(dirname(legacy), { recursive: true });
+  writeFileSync(legacy, JSON.stringify(secrets));
+  const output = isolatedAuth(home, `console.log(JSON.stringify(auth.readCaidoRoot()));
+    auth.upsertCaidoInstance('http://other.invalid:8080', {pat: 'other-fixture-pat'});`);
+  assert.equal(JSON.parse(output).instances[fixtureUrl].pat, "legacy-fixture-pat");
+  const migrated = JSON.parse(readFileSync(modern, "utf8"));
+  assert.deepEqual(migrated.anotherService, secrets.anotherService);
+  assert.equal(migrated.caido.instances[fixtureUrl].pat, "legacy-fixture-pat");
+  assert.equal(migrated.caido.instances[otherUrl].pat, "other-fixture-pat");
+  assert.deepEqual(JSON.parse(readFileSync(legacy, "utf8")), secrets);
+});
+
+test("modern secrets take precedence and an explicit missing config never falls back", () => {
+  const home = join(sandbox, "precedence-home");
+  for (const [path, pat] of [
+    [join(home, ".claude", "config", "secrets.json"), "legacy-fixture-pat"],
+    [join(home, ".config", "caido", "secrets.json"), "modern-fixture-pat"],
+  ]) {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, JSON.stringify({ caido: { url: fixtureUrl, pat } }));
+  }
+  const output = isolatedAuth(home, "console.log(JSON.stringify(auth.readCaidoRoot()));");
+  assert.equal(JSON.parse(output).instances[fixtureUrl].pat, "modern-fixture-pat");
+  const overridden = isolatedAuth(home, "console.log(JSON.stringify(auth.readCaidoRoot()));", join(home, "missing.json"));
+  assert.deepEqual(JSON.parse(overridden).instances, {});
 });
 
 test("legacy auth migrates without losing other services or instance credentials", () => {

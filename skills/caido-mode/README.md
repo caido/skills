@@ -17,7 +17,7 @@ Run commands from the skill directory to use its installed dependencies. Scripts
 
 Install this directory as `caido-mode` in your agent client's skill location and run `npm install` there. `SKILL.md` supports automatic discovery without mentions in another project's skills.
 
-`setup` validates the PAT and stores URL-keyed credentials and cached access tokens in `~/.claude/config/secrets.json`; `CAIDO_CONFIG` overrides that path. Existing instances retain separate credentials. Select a URL per process with `CAIDO_URL`; `CAIDO_PAT` and `CAIDO_PROXY` override the selected instance's stored values. The proxy defaults to the API URL. Use `auth-status` to inspect the selected URL/proxy without exposing credentials.
+`setup` validates the PAT and stores URL-keyed credentials and cached access tokens in `~/.config/caido/secrets.json`; `CAIDO_CONFIG` overrides that path. Without an override, reads fall back to `~/.claude/config/secrets.json` if the new file is absent. Existing instances retain separate credentials. Select a URL per process with `CAIDO_URL`; `CAIDO_PAT` and `CAIDO_PROXY` override the selected instance's stored values. The proxy defaults to the API URL. Use `auth-status` to inspect the selected URL/proxy without exposing credentials.
 
 Nonsecret capability metadata lives outside the checkout; `CAIDO_MODE_HOME` overrides its directory. `capabilities --refresh` or the first command needing schema metadata discovers the actual instance's schema. Later operations use the cache, and release checks happen only through explicit `check-updates`. See [setup and diagnosis](references/setup.md).
 

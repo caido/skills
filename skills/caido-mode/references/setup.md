@@ -11,7 +11,7 @@ npx tsx caido-client.ts health
 
 Node.js 24+ and a running Caido instance are required. Create a PAT in Caido's Dashboard → Developer → Personal Access Tokens. Scripts may also use `node --import tsx caido-client.ts <command>` from the skill directory; Node resolves the `tsx` loader from the working directory.
 
-`setup` validates the PAT through the SDK's device-code flow, auto-approved by the PAT, then caches the PAT and access token in `~/.claude/config/secrets.json`. `CAIDO_CONFIG` overrides this file. A valid cached token works without the PAT. Treat both the config and exported curl files as credentials; do not print their contents merely to discover an address.
+`setup` validates the PAT through the SDK's device-code flow, auto-approved by the PAT, then caches the PAT and access token in `~/.config/caido/secrets.json`. `CAIDO_CONFIG` overrides this file. Without an override, reads fall back to `~/.claude/config/secrets.json` if the new file is absent; the next write preserves those credentials in the new location. A valid cached token works without the PAT. Treat both the config and exported curl files as credentials; do not print their contents merely to discover an address.
 
 Credentials are keyed by instance URL. `setup <pat> <url>` adds that instance and makes it the stored default without replacing other URLs. The active URL is `CAIDO_URL` → stored default → `http://localhost:8080`. Select `CAIDO_URL` per process or shell when working concurrently. `CAIDO_PAT` and `CAIDO_PROXY` override the active instance's saved values. Preserve other instances when changing credentials.
 

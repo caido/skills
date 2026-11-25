@@ -1,7 +1,6 @@
 ---
 name: caido-mode
 description: Use Caido for HTTP history, authenticated proxy testing, named replay handoffs, Match & Replace, workflows, WebSocket history, Intercept, Automate and native synchronized replay through the official SDK. PAT auth recommended.
-tags: [worker]
 ---
 
 # Caido Mode

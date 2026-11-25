@@ -1,7 +1,7 @@
 /**
  * Caido SDK client with URL-keyed (multi-instance) auth.
  *
- * Credentials live in ~/.claude/config/secrets.json under `.caido`, keyed by
+ * Credentials live in ~/.config/caido/secrets.json under `.caido`, keyed by
  * instance URL so two Caido instances on one machine never clobber each other:
  *
  *   "caido": {
@@ -24,7 +24,8 @@ import { readKnownVersion } from "./state";
 
 const SECRETS_PATH = process.env.CAIDO_CONFIG
   ? resolve(process.env.CAIDO_CONFIG)
-  : join(homedir(), ".claude", "config", "secrets.json");
+  : join(homedir(), ".config", "caido", "secrets.json");
+const LEGACY_SECRETS_PATH = join(homedir(), ".claude", "config", "secrets.json");
 const DEFAULT_URL = "http://localhost:8080";
 
 /**
@@ -59,9 +60,9 @@ export interface CaidoRoot {
 
 /** Read the whole secrets.json (all services), tolerating a missing/corrupt file. */
 function readSecretsFile(): Record<string, any> {
-  if (!existsSync(SECRETS_PATH)) return {};
+  const path = process.env.CAIDO_CONFIG || existsSync(SECRETS_PATH) ? SECRETS_PATH : LEGACY_SECRETS_PATH;
   try {
-    return JSON.parse(readFileSync(SECRETS_PATH, "utf-8")) || {};
+    return JSON.parse(readFileSync(path, "utf-8")) || {};
   } catch {
     return {};
   }
